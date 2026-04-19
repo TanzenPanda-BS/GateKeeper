@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, ShieldCheck, BriefcaseBusiness, FileText, TrendingUp, Zap, ChevronRight } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, BriefcaseBusiness, FileText, TrendingUp, Zap, ChevronRight, Activity } from "lucide-react";
 import type { Recommendation } from "@shared/schema";
 
 export default function Sidebar() {
@@ -8,6 +8,8 @@ export default function Sidebar() {
   const { data: pending = [] } = useQuery<Recommendation[]>({ queryKey: ["/api/recommendations/pending"], refetchInterval: 30000 });
   const { data: session } = useQuery<any>({ queryKey: ["/api/session"], refetchInterval: 60000 });
   const { data: clock } = useQuery<any>({ queryKey: ["/api/alpaca/clock"], refetchInterval: 60000 });
+  const { data: sentimentData = [] } = useQuery<any[]>({ queryKey: ["/api/sentiment"], refetchInterval: 300000 });
+  const dangerCount = sentimentData.filter((s: any) => s.alertLevel === "DANGER" || s.alertLevel === "CAUTION").length;
 
   const daysActive = session?.daysActive ?? 1;
   const progressPct = session?.progressPct ?? 1.11;
@@ -20,6 +22,7 @@ export default function Sidebar() {
     { href: "/reports", label: "After Action", icon: FileText },
     { href: "/trust", label: "Trust & ROI", icon: TrendingUp },
     { href: "/rules", label: "Exception Rules", icon: Zap },
+    { href: "/sentiment", label: "Sentiment", icon: Activity, badge: dangerCount > 0 ? String(dangerCount) : undefined },
   ];
 
   return (

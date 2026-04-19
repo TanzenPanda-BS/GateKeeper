@@ -66,6 +66,21 @@ export async function cancelOrder(orderId: string) {
   return res.status === 204;
 }
 
+// Close (liquidate) an entire position at market
+export async function closePosition(ticker: string) {
+  const res = await fetch(`${BROKER_BASE}/positions/${ticker}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Alpaca closePosition ${ticker} → ${res.status}: ${text}`);
+  }
+  // 200 = order placed, 204 = position already closed
+  if (res.status === 204) return { status: "already_flat", ticker };
+  return res.json();
+}
+
 // ── Market data ──────────────────────────────────────────────────────────────
 const WATCHLIST = ["NVDA", "MSFT", "TSLA", "AMD", "AAPL", "META", "AMZN", "GOOGL", "SPY", "QQQ"];
 

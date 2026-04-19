@@ -1,8 +1,13 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { ShieldCheck, RefreshCw, AlertTriangle, ChevronRight, TrendingUp, TrendingDown, Timer, CalendarClock, BarChart2, Activity, X } from "lucide-react";
+import { ShieldCheck, RefreshCw, AlertTriangle, ChevronRight, TrendingUp, TrendingDown, Timer, CalendarClock, BarChart2, Activity, X, LogOut } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Position, Recommendation, TrustMetrics } from "@shared/schema";
@@ -12,7 +17,8 @@ function fmt(n: number, d = 2) { return n.toLocaleString("en-US", { minimumFract
 
 export default function Dashboard() {
   const { toast } = useToast();
-  const [dismissedAlerts, setDismissedAlerts] = useState<string[]>([]);
+  const [exitTarget, setExitTarget] = useState<string | null>(null); // P3: ticker being confirmed for exit
+
   const { data: positions = [] } = useQuery<Position[]>({ queryKey: ["/api/positions"], refetchInterval: 60000 });
   const { data: pending = [] } = useQuery<Recommendation[]>({ queryKey: ["/api/recommendations/pending"], refetchInterval: 30000 });
   const { data: trust } = useQuery<TrustMetrics>({ queryKey: ["/api/trust-metrics"], refetchInterval: 60000 });
@@ -21,6 +27,33 @@ export default function Dashboard() {
   const { data: session } = useQuery<any>({ queryKey: ["/api/session"], refetchInterval: 60000 });
   const { data: alerts = [] } = useQuery<any[]>({ queryKey: ["/api/alerts"], refetchInterval: 300000 });
   const { data: allSentiment = [] } = useQuery<any[]>({ queryKey: ["/api/sentiment"], refetchInterval: 300000 });
+
+  // P2: DB-backed dismissed alerts
+  const { data: dismissed = [] } = useQuery<{ alertKey: string; alertLevel: string }[]>({
+    queryKey: ["/api/dismissed-alerts"],
+    refetchInterval: 0,
+  });
+
+  const dismissMutation = useMutation({
+    mutationFn: (payload: { alertKey: string; alertLevel: string }) =>
+      apiRequest("POST", "/api/dismissed-alerts", payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dismissed-alerts"] }),
+  });
+
+  // P3: Exit position mutation
+  const exitMutation = useMutation({
+    mutationFn: (ticker: string) => apiRequest("POST", `/api/positions/${ticker}/exit`, {}),
+    onSuccess: (_data, ticker) => {
+      toast({ title: `${ticker} — Exit order placed`, description: "Market sell order submitted to Alpaca. Position will close shortly." });
+      queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/alerts"] });
+      setExitTarget(null);
+    },
+    onError: (e: any, ticker) => {
+      toast({ title: `Exit failed for ${ticker}`, description: e.message, variant: "destructive" });
+      setExitTarget(null);
+    },
+  });
 
   const generateSignals = useMutation({
     mutationFn: () => apiRequest("POST", "/api/signals/generate", {}),
@@ -41,47 +74,103 @@ export default function Dashboard() {
   const progressPct = session?.progressPct ?? 1;
 
   const totalPositionValue = positions.reduce((s, p) => s + Math.abs(p.marketValue), 0);
-  const totalPnl = positions.reduce((s, p) => s + p.unrealizedPnl, 0);
 
-  // Active HIGH/MEDIUM urgency alerts, not yet dismissed
-  const activeAlerts = alerts.filter((a: any) =>
-    (a.urgency === "HIGH" || a.urgency === "MEDIUM") &&
-    a.recommendation !== "HOLD" &&
-    !dismissedAlerts.includes(`${a.ticker}-${a.recommendation}`)
+  // Build dismissed key set from DB — filter out alerts where level escalated
+  const dismissedKeys = new Set(
+    (dismissed as { alertKey: string; alertLevel: string }[]).map(d => d.alertKey)
   );
 
-  const dismissAlert = (ticker: string, rec: string) =>
-    setDismissedAlerts(prev => [...prev, `${ticker}-${rec}`]);
+  // Active HIGH/MEDIUM urgency alerts, not yet dismissed or level-escalated
+  const activeAlerts = alerts.filter((a: any) => {
+    if (a.urgency !== "HIGH" && a.urgency !== "MEDIUM") return false;
+    if (a.recommendation === "HOLD") return false;
+    const key = `${a.ticker}-${a.recommendation}`;
+    if (!dismissedKeys.has(key)) return true;
+    // Check if the alert level escalated since dismissal
+    const prev = (dismissed as { alertKey: string; alertLevel: string }[]).find(d => d.alertKey === key);
+    if (!prev) return true;
+    const levelOrder: Record<string, number> = { NONE: 0, WATCH: 1, MEDIUM: 1, CAUTION: 2, HIGH: 2, DANGER: 3 };
+    const prevLevel = levelOrder[prev.alertLevel] ?? 0;
+    const curLevel = levelOrder[a.urgency] ?? 0;
+    return curLevel > prevLevel; // re-show if escalated
+  });
+
+  const handleDismiss = (ticker: string, rec: string, urgency: string) => {
+    dismissMutation.mutate({ alertKey: `${ticker}-${rec}`, alertLevel: urgency });
+  };
+
+  // Determine if a ticker has a current position (for showing exit button)
+  const positionTickers = new Set(positions.map(p => p.ticker));
 
   return (
     <div className="p-6 space-y-6">
-      {/* Safety-net alert banner */}
+      {/* P3: Exit confirmation modal */}
+      <AlertDialog open={exitTarget !== null} onOpenChange={open => !open && setExitTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Exit {exitTarget} — Confirm Market Sell</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will submit a <strong>market sell order</strong> to close your entire {exitTarget} position immediately at the current market price.
+              This action <strong>cannot be undone</strong>. Proceed?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => exitTarget && exitMutation.mutate(exitTarget)}
+              data-testid="btn-confirm-exit"
+            >
+              {exitMutation.isPending ? "Submitting..." : "Exit Position"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Safety-net alert banner (P2: DB-backed dismissals, P3: Exit button) */}
       {activeAlerts.length > 0 && (
         <div className="space-y-2">
-          {activeAlerts.map((alert: any) => (
-            <div
-              key={`${alert.ticker}-${alert.recommendation}`}
-              className={`flex items-start gap-3 p-3.5 rounded-lg border text-sm ${
-                alert.urgency === "HIGH"
-                  ? "bg-red-500/10 border-red-500/30 text-red-300"
-                  : "bg-orange-500/10 border-orange-500/30 text-orange-300"
-              }`}
-              data-testid={`alert-${alert.ticker}`}
-            >
-              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <span className="font-semibold">{alert.ticker} — {alert.recommendation.replace("_", " ")}:</span>{" "}
-                <span className="text-sm opacity-90">{alert.reason}</span>
-              </div>
-              <button
-                onClick={() => dismissAlert(alert.ticker, alert.recommendation)}
-                className="flex-shrink-0 opacity-60 hover:opacity-100"
-                data-testid={`dismiss-alert-${alert.ticker}`}
+          {activeAlerts.map((alert: any) => {
+            const isDanger = alert.urgency === "HIGH" || alert.recommendation === "EXIT_POSITION" || alert.recommendation === "REDUCE_POSITION";
+            const hasPosition = positionTickers.has(alert.ticker);
+            return (
+              <div
+                key={`${alert.ticker}-${alert.recommendation}`}
+                className={`flex items-start gap-3 p-3.5 rounded-lg border text-sm ${
+                  isDanger
+                    ? "bg-red-500/10 border-red-500/30 text-red-300"
+                    : "bg-orange-500/10 border-orange-500/30 text-orange-300"
+                }`}
+                data-testid={`alert-${alert.ticker}`}
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-semibold">{alert.ticker} — {alert.recommendation.replace(/_/g, " ")}:</span>{" "}
+                  <span className="text-sm opacity-90">{alert.reason}</span>
+                </div>
+                {/* P3: Exit button for DANGER alerts where we hold the position */}
+                {isDanger && hasPosition && (
+                  <button
+                    onClick={() => setExitTarget(alert.ticker)}
+                    className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-red-600/80 hover:bg-red-600 text-white transition-colors"
+                    data-testid={`btn-exit-${alert.ticker}`}
+                    title="Market sell — close entire position"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    Exit
+                  </button>
+                )}
+                {/* Dismiss X */}
+                <button
+                  onClick={() => handleDismiss(alert.ticker, alert.recommendation, alert.urgency)}
+                  className="flex-shrink-0 opacity-60 hover:opacity-100"
+                  data-testid={`dismiss-alert-${alert.ticker}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -207,7 +296,6 @@ export default function Dashboard() {
                       <span className={`text-xs px-2 py-0.5 rounded font-medium flex-shrink-0 ${rec.confidence === "HIGH" ? "badge-high" : rec.confidence === "MEDIUM" ? "badge-medium" : "badge-speculative"}`}>{rec.confidence}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{rec.reasoning}</p>
-                    {/* Signal conviction mini bar */}
                     <div className="mt-2">
                       <div className="h-1 bg-secondary rounded-full overflow-hidden">
                         <div className={`h-full rounded-full ${strength >= 70 ? "bg-green-500" : strength >= 40 ? "bg-yellow-500" : "bg-orange-500"}`} style={{ width: `${strength}%` }} />
@@ -345,9 +433,14 @@ function SentimentWidget({ sentiments }: { sentiments: any[] }) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary" />
-          Market Sentiment
+        <CardTitle className="text-sm flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary" />
+            Market Sentiment
+          </span>
+          <Link href="/sentiment">
+            <a className="text-xs text-primary hover:underline font-normal">Full view →</a>
+          </Link>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">

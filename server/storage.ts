@@ -8,6 +8,7 @@ import {
   type Position, type InsertPosition, type ExceptionRule, type InsertExceptionRule,
   type DailyMetrics, type AfterActionReport, type InsertAAR,
   type TrustMetrics, type InsertTrustMetrics,
+  type DismissedAlert, type SentimentHistory,
 } from "@shared/schema";
 
 // Use DATABASE_URL env var for cloud deployments (e.g. Railway volume at /data/gatekeeper.db)
@@ -116,6 +117,21 @@ sqlite.exec(`
     market_aux_score REAL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS dismissed_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_key TEXT NOT NULL UNIQUE,
+    alert_level TEXT NOT NULL,
+    dismissed_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sentiment_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    score REAL NOT NULL,
+    alert_level TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    snapshot_hour INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
 `);
 
 // Live migrations — add new columns to existing tables if they don't exist
@@ -190,6 +206,14 @@ export interface IStorage {
   getSentiment(ticker: string): any | undefined;
   getAllSentiment(): any[];
   upsertSentiment(data: any): void;
+  // Dismissed alerts (P2 — DB-backed)
+  getDismissedAlerts(): DismissedAlert[];
+  dismissAlert(alertKey: string, alertLevel: string): void;
+  restoreAlert(alertKey: string): void;
+  isDismissed(alertKey: string, alertLevel: string): boolean;
+  // Sentiment history (P4 — 7-day chart)
+  addSentimentSnapshot(ticker: string, score: number, alertLevel: string): void;
+  getSentimentHistory(ticker: string, days?: number): SentimentHistory[];
 }
 
 export class Storage implements IStorage {
@@ -367,6 +391,62 @@ export class Storage implements IStorage {
         data.marketAuxScore ?? null, data.updatedAt
       );
     }
+  }
+
+  // ── Dismissed alerts (P2) ────────────────────────────────────────────────
+  getDismissedAlerts(): DismissedAlert[] {
+    const rows = sqlite.prepare("SELECT * FROM dismissed_alerts ORDER BY dismissed_at DESC").all() as any[];
+    return rows.map(r => ({ id: r.id, alertKey: r.alert_key, alertLevel: r.alert_level, dismissedAt: r.dismissed_at })) as DismissedAlert[];
+  }
+  dismissAlert(alertKey: string, alertLevel: string): void {
+    const existing = sqlite.prepare("SELECT id FROM dismissed_alerts WHERE alert_key = ?").get(alertKey);
+    if (existing) {
+      sqlite.prepare("UPDATE dismissed_alerts SET alert_level = ?, dismissed_at = ? WHERE alert_key = ?")
+        .run(alertLevel, new Date().toISOString(), alertKey);
+    } else {
+      sqlite.prepare("INSERT INTO dismissed_alerts (alert_key, alert_level, dismissed_at) VALUES (?,?,?)")
+        .run(alertKey, alertLevel, new Date().toISOString());
+    }
+  }
+  restoreAlert(alertKey: string): void {
+    sqlite.prepare("DELETE FROM dismissed_alerts WHERE alert_key = ?").run(alertKey);
+  }
+  isDismissed(alertKey: string, currentLevel: string): boolean {
+    const row = sqlite.prepare("SELECT alert_level FROM dismissed_alerts WHERE alert_key = ?").get(alertKey) as any;
+    if (!row) return false;
+    // Re-show if the alert has escalated to a more severe level since dismissal
+    const levelOrder: Record<string, number> = { NONE: 0, WATCH: 1, MEDIUM: 1, CAUTION: 2, HIGH: 2, DANGER: 3 };
+    const dismissed = levelOrder[row.alert_level] ?? 0;
+    const current = levelOrder[currentLevel] ?? 0;
+    return current <= dismissed; // still dismissed unless it escalated
+  }
+
+  // ── Sentiment history (P4) ────────────────────────────────────────────────
+  addSentimentSnapshot(ticker: string, score: number, alertLevel: string): void {
+    const now = new Date();
+    const date = now.toISOString().split("T")[0];
+    const hour = now.getUTCHours();
+    // Deduplicate — one snapshot per ticker per hour
+    const existing = sqlite.prepare(
+      "SELECT id FROM sentiment_history WHERE ticker = ? AND snapshot_date = ? AND snapshot_hour = ?"
+    ).get(ticker, date, hour);
+    if (!existing) {
+      sqlite.prepare(
+        "INSERT INTO sentiment_history (ticker, score, alert_level, snapshot_date, snapshot_hour, created_at) VALUES (?,?,?,?,?,?)"
+      ).run(ticker, score, alertLevel, date, hour, now.toISOString());
+    }
+  }
+  getSentimentHistory(ticker: string, days = 7): SentimentHistory[] {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const sinceDate = since.toISOString().split("T")[0];
+    const rows = sqlite.prepare(
+      "SELECT * FROM sentiment_history WHERE ticker = ? AND snapshot_date >= ? ORDER BY snapshot_date ASC, snapshot_hour ASC"
+    ).all(ticker, sinceDate) as any[];
+    return rows.map(r => ({
+      id: r.id, ticker: r.ticker, score: r.score, alertLevel: r.alert_level,
+      snapshotDate: r.snapshot_date, snapshotHour: r.snapshot_hour, createdAt: r.created_at
+    })) as SentimentHistory[];
   }
 }
 

@@ -10,6 +10,7 @@ import Portfolio from "./pages/Portfolio";
 import AARPage from "./pages/AARPage";
 import TrustPage from "./pages/TrustPage";
 import ExceptionRules from "./pages/ExceptionRules";
+import SentimentPage from "./pages/SentimentPage";
 import NotFound from "./pages/not-found";
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
               <Route path="/reports" component={AARPage} />
               <Route path="/trust" component={TrustPage} />
               <Route path="/rules" component={ExceptionRules} />
+              <Route path="/sentiment" component={SentimentPage} />
               <Route component={NotFound} />
             </Switch>
           </main>

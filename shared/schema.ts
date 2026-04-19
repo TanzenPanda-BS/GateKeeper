@@ -189,3 +189,28 @@ export type DailyMetrics = typeof dailyMetrics.$inferSelect;
 export type AfterActionReport = typeof afterActionReports.$inferSelect;
 export type TrustMetrics = typeof trustMetrics.$inferSelect;
 export type InsertTrustMetrics = z.infer<typeof insertTrustMetricsSchema>;
+
+// ── Dismissed alerts (DB-backed so dismissals survive refresh) ─────────────
+export const dismissedAlerts = sqliteTable("dismissed_alerts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  alertKey: text("alert_key").notNull(),       // "{ticker}-{recommendation}" e.g. "AAPL-EXIT_POSITION"
+  alertLevel: text("alert_level").notNull(),   // DANGER | HIGH | MEDIUM — re-show if level escalates
+  dismissedAt: text("dismissed_at").notNull(),
+});
+
+// ── Sentiment history (7-day snapshot for the /sentiment page chart) ────────
+export const sentimentHistory = sqliteTable("sentiment_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ticker: text("ticker").notNull(),
+  score: real("score").notNull(),
+  alertLevel: text("alert_level").notNull(),
+  snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD
+  snapshotHour: integer("snapshot_hour").notNull(), // 0–23
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertDismissedAlertSchema = createInsertSchema(dismissedAlerts).omit({ id: true });
+export const insertSentimentHistorySchema = createInsertSchema(sentimentHistory).omit({ id: true });
+
+export type DismissedAlert = typeof dismissedAlerts.$inferSelect;
+export type SentimentHistory = typeof sentimentHistory.$inferSelect;

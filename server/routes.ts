@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import {
   getAccount, getClock, getPositions, getLatestBars,
-  generateSignals, placeOrder, getOrders
+  generateSignals, placeOrder, getOrders, closePosition
 } from "./alpaca";
 import {
   runEODPipeline, recalculateTrustScore, generateDailyAAR
@@ -333,9 +333,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           headlines: s.headlines, keySignals: s.keySignals,
           marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
         });
+        // Snapshot to history for the 7-day chart (P4)
+        storage.addSentimentSnapshot(s.ticker, s.score, s.alertLevel);
       }
       res.json({ refreshed: results.length, tickers: results.map(r => r.ticker), results });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── P2: Dismissed alerts (DB-backed) ────────────────────────────────────────────────
+  // GET /api/dismissed-alerts — list all dismissed alert keys
+  app.get("/api/dismissed-alerts", (_req, res) => {
+    try {
+      const rows = storage.getDismissedAlerts();
+      res.json(rows.map(r => ({ alertKey: r.alertKey, alertLevel: r.alertLevel, dismissedAt: r.dismissedAt })));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/dismissed-alerts { alertKey, alertLevel } — dismiss an alert
+  app.post("/api/dismissed-alerts", (req, res) => {
+    try {
+      const { alertKey, alertLevel } = req.body;
+      if (!alertKey || !alertLevel) return res.status(400).json({ error: "alertKey and alertLevel required" });
+      storage.dismissAlert(alertKey, alertLevel);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE /api/dismissed-alerts/:alertKey — restore (un-dismiss) an alert
+  app.delete("/api/dismissed-alerts/:alertKey", (req, res) => {
+    try {
+      storage.restoreAlert(decodeURIComponent(req.params.alertKey));
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── P4: Sentiment history ───────────────────────────────────────────────────────────
+  // GET /api/sentiment/history?ticker=NVDA&days=7
+  app.get("/api/sentiment/history", (req, res) => {
+    try {
+      const ticker = (req.query.ticker as string || "").toUpperCase();
+      const days = parseInt(req.query.days as string || "7", 10);
+      if (!ticker) return res.status(400).json({ error: "ticker param required" });
+      const rows = storage.getSentimentHistory(ticker, days);
+      res.json(rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── P3: Auto-exit (close position via Alpaca) ───────────────────────────────────────────
+  // POST /api/positions/:ticker/exit — market sell entire position
+  app.post("/api/positions/:ticker/exit", async (req, res) => {
+    try {
+      const ticker = req.params.ticker.toUpperCase();
+      // Liquidate entire position at market via Alpaca
+      const result = await closePosition(ticker);
+      res.json({ ok: true, order: result });
+    } catch (e: any) {
+      // Alpaca returns 422 if position doesn't exist
+      res.status(422).json({ error: e.message });
+    }
   });
 
   app.get("/api/alerts", async (_req, res) => {
