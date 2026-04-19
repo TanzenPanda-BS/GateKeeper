@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* GateKeeper: Deep navy/slate precision finance palette */
+    --background: 222 20% 8%;
+    --foreground: 210 20% 88%;
+
+    --card: 222 18% 11%;
+    --card-foreground: 210 20% 88%;
+
+    --popover: 222 18% 11%;
+    --popover-foreground: 210 20% 88%;
+
+    --primary: 199 90% 48%;
+    --primary-foreground: 222 20% 8%;
+
+    --secondary: 222 15% 16%;
+    --secondary-foreground: 210 15% 72%;
+
+    --muted: 222 15% 14%;
+    --muted-foreground: 210 10% 52%;
+
+    --accent: 199 80% 42%;
+    --accent-foreground: 210 20% 92%;
+
+    --destructive: 4 72% 56%;
+    --destructive-foreground: 210 20% 96%;
+
+    --border: 222 14% 18%;
+    --input: 222 14% 18%;
+    --ring: 199 90% 48%;
+
+    --radius: 0.5rem;
+
+    /* Semantic colors */
+    --color-gain: 142 60% 45%;
+    --color-loss: 4 72% 56%;
+    --color-warning: 38 88% 52%;
+    --color-neutral: 210 10% 52%;
+    --color-high: 199 90% 48%;
+    --color-medium: 38 88% 52%;
+    --color-speculative: 280 60% 58%;
+
+    /* Trust score gradient colors */
+    --trust-low: 4 72% 56%;
+    --trust-mid: 38 88% 52%;
+    --trust-high: 142 60% 45%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, .mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* Gain/Loss colors */
+.gain { color: hsl(var(--color-gain)); }
+.loss { color: hsl(var(--color-loss)); }
+.neutral { color: hsl(var(--color-neutral)); }
+
+/* Confidence badges */
+.badge-high { background: hsl(199 90% 48% / 0.15); color: hsl(199 90% 65%); border: 1px solid hsl(199 90% 48% / 0.3); }
+.badge-medium { background: hsl(38 88% 52% / 0.15); color: hsl(38 88% 68%); border: 1px solid hsl(38 88% 52% / 0.3); }
+.badge-speculative { background: hsl(280 60% 58% / 0.15); color: hsl(280 60% 72%); border: 1px solid hsl(280 60% 58% / 0.3); }
+.badge-buy { background: hsl(142 60% 45% / 0.15); color: hsl(142 60% 60%); border: 1px solid hsl(142 60% 45% / 0.3); }
+.badge-sell { background: hsl(4 72% 56% / 0.15); color: hsl(4 72% 68%); border: 1px solid hsl(4 72% 56% / 0.3); }
+.badge-hold { background: hsl(210 10% 52% / 0.15); color: hsl(210 10% 68%); border: 1px solid hsl(210 10% 52% / 0.3); }
+
+/* Decision gate card */
+.rec-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.rec-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 32px hsl(199 90% 48% / 0.08);
+}
+
+/* Trust meter */
+.trust-ring {
+  filter: drop-shadow(0 0 8px hsl(199 90% 48% / 0.4));
+}
+
+/* Pulse for pending */
+@keyframes pendingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.pending-dot {
+  animation: pendingPulse 2s ease-in-out infinite;
+}

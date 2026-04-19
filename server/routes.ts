@@ -1,0 +1,415 @@
+import type { Express } from "express";
+import type { Server } from "http";
+import { storage } from "./storage";
+import {
+  getAccount, getClock, getPositions, getLatestBars,
+  generateSignals, placeOrder, getOrders
+} from "./alpaca";
+import {
+  runEODPipeline, recalculateTrustScore, generateDailyAAR
+} from "./engine";
+import { analyzeSentiment, evaluateSafetyNet } from "./sentiment";
+
+// ── Bootstrap: initialize beta session on first run ──────────────────────────
+async function initBetaSession() {
+  const existing = storage.getBetaSession();
+  if (existing) return existing;
+
+  console.log("[INIT] Starting Day 1 — initializing beta session...");
+  try {
+    const account = await getAccount();
+    const equity = parseFloat(account.equity);
+    const spyBars = await getLatestBars(["SPY"]);
+    const spyPrice = spyBars["SPY"]?.c ?? 500;
+
+    const session = storage.createBetaSession(equity, spyPrice);
+    console.log(`[INIT] Beta session created. Day 1. Equity: $${equity}. SPY: $${spyPrice}`);
+
+    // Initialize trust metrics with Day 1 state
+    storage.upsertTrustMetrics({
+      trustScore: 0,
+      roiDelta: 0,
+      portfolioReturn: 0,
+      benchmarkReturn: 0,
+      quadrant: "LOW_TRUST_POS",
+      subscriptionVerdict: "FORMING",
+      subscriptionRecommendation: "Day 1 of 90 — your 90-day evaluation has started. Generate signals and make decisions to begin building your Trust Score. The platform will track every recommendation, whether you approve or reject it.",
+      approvalRate: 0,
+      aiWinRate: 0,
+      userWinRate: 0,
+      totalDecisions: 0,
+      daysActive: 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return session;
+  } catch (e) {
+    console.error("[INIT] Failed to initialize beta session:", e);
+    return null;
+  }
+}
+
+// ── Position sync from Alpaca ─────────────────────────────────────────────────
+async function syncPositions() {
+  try {
+    const live = await getPositions();
+    storage.clearPositions();
+    for (const p of live) {
+      storage.upsertPosition({
+        ticker: p.symbol,
+        shares: parseFloat(p.qty),
+        avgCost: parseFloat(p.avg_entry_price),
+        currentPrice: parseFloat(p.current_price),
+        marketValue: parseFloat(p.market_value),
+        unrealizedPnl: parseFloat(p.unrealized_pl),
+        unrealizedPct: parseFloat(p.unrealized_plpc) * 100,
+        isAutoManaged: 0,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    return live.length;
+  } catch { return 0; }
+}
+
+export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Initialize on startup
+  await initBetaSession();
+  await syncPositions();
+
+  // Auto-sync positions every 60 seconds
+  setInterval(syncPositions, 60000);
+
+  // Auto-expire stale recommendations every 5 minutes
+  setInterval(() => storage.expireOldRecommendations(), 300000);
+
+  // Auto-recalculate trust score every 15 minutes
+  setInterval(async () => {
+    try { await recalculateTrustScore(); } catch {}
+  }, 900000);
+
+  // Auto-refresh sentiment every 30 minutes
+  setInterval(async () => {
+    try {
+      const pending = storage.getPendingRecommendations();
+      const positions = storage.getPositions();
+      const tickers = [...new Set([
+        ...pending.map(r => r.ticker),
+        ...positions.map(p => p.ticker),
+        "NVDA", "TSLA", "MSFT", "AMD", "AAPL", "META", "AMZN", "GOOGL",
+      ])];
+      const results = await analyzeSentiment(tickers);
+      for (const s of results) {
+        storage.upsertSentiment({
+          ticker: s.ticker, score: s.score, label: s.label, alertLevel: s.alertLevel,
+          alertReason: s.alertReason, articleCount: s.articleCount,
+          headlines: s.headlines, keySignals: s.keySignals,
+          marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
+        });
+      }
+      console.log(`[SENTIMENT] Refreshed ${results.length} tickers`);
+    } catch (e) {
+      console.error("[SENTIMENT] Auto-refresh error:", e);
+    }
+  }, 1800000); // 30 minutes
+
+  // ── Beta session & status ────────────────────────────────────────────────
+  app.get("/api/session", (_req, res) => {
+    const session = storage.getBetaSession();
+    if (!session) return res.json({ day: 1, startDate: null, initialized: false });
+    const daysActive = Math.max(1, Math.floor((Date.now() - new Date(session.startDate).getTime()) / 86400000) + 1);
+    res.json({
+      ...session,
+      daysActive,
+      daysRemaining: Math.max(0, 90 - daysActive),
+      progressPct: Math.min(100, (daysActive / 90) * 100),
+      initialized: true,
+    });
+  });
+
+  // ── Alpaca account & market ──────────────────────────────────────────────
+  app.get("/api/alpaca/account", async (_req, res) => {
+    try { res.json(await getAccount()); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/alpaca/clock", async (_req, res) => {
+    try { res.json(await getClock()); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/alpaca/orders", async (_req, res) => {
+    try { res.json(await getOrders()); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Live positions ────────────────────────────────────────────────────────
+  app.get("/api/positions", (_req, res) => {
+    res.json(storage.getPositions());
+  });
+
+  app.post("/api/positions/sync", async (_req, res) => {
+    const count = await syncPositions();
+    res.json({ synced: count });
+  });
+
+  // ── Live market prices ────────────────────────────────────────────────────
+  app.get("/api/market/prices", async (req, res) => {
+    try {
+      const symbols = (req.query.symbols as string)?.split(",") || undefined;
+      res.json(await getLatestBars(symbols));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Signal generation ─────────────────────────────────────────────────────
+  app.post("/api/signals/generate", async (_req, res) => {
+    try {
+      const account = await getAccount();
+      const equity = parseFloat(account.equity);
+      const signals = await generateSignals(equity);
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 4 * 3600000).toISOString();
+      const created: any[] = [];
+
+      for (const sig of signals) {
+        const existing = storage.getPendingRecommendations().find(r => r.ticker === sig.ticker);
+        if (existing) continue;
+        const rec = storage.createRecommendation({
+          ticker: sig.ticker, action: sig.action, shares: sig.shares,
+          priceAtRecommendation: sig.priceAtRecommendation,
+          targetPrice: sig.targetPrice, stopLoss: sig.stopLoss,
+          confidence: sig.confidence, reasoning: sig.reasoning,
+          catalysts: JSON.stringify(sig.catalysts),
+          upsidePercent: sig.upsidePercent, downsidePercent: sig.downsidePercent,
+          timeHorizon: sig.timeHorizon,
+          tradeStyle: sig.tradeStyle,
+          holdDaysMin: sig.holdDaysMin,
+          holdDaysMax: sig.holdDaysMax,
+          holdUntilDate: sig.holdUntilDate,
+          signalStrength: sig.signalStrength,
+          signalAge: 0,
+          isAutoTrade: 0,
+          status: "PENDING",
+          expiresAt, createdAt: now.toISOString(),
+        });
+        created.push(rec);
+      }
+
+      res.json({ generated: signals.length, stored: created.length, signals: created });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Execute trade on Alpaca ───────────────────────────────────────────────
+  app.post("/api/alpaca/execute", async (req, res) => {
+    try {
+      const { recommendationId } = req.body;
+      const rec = storage.getRecommendationById(recommendationId);
+      if (!rec) return res.status(404).json({ error: "Not found" });
+      if (rec.status !== "APPROVED" && rec.status !== "MODIFIED") {
+        return res.status(400).json({ error: "Not approved" });
+      }
+      const qty = rec.modifiedShares ?? rec.shares;
+      const side = rec.action === "BUY" ? "buy" : "sell";
+      const order = await placeOrder({
+        symbol: rec.ticker, qty, side,
+        type: "market", time_in_force: "day",
+        client_order_id: `gk-rec-${rec.id}-${Date.now()}`,
+      });
+      // Store the order ID so we can track it
+      if (order?.id) storage.setAlpacaOrderId(rec.id, order.id);
+      res.json({ order, recommendation: rec });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Recommendations ───────────────────────────────────────────────────────
+  app.get("/api/recommendations", (req, res) => {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 100;
+    res.json(storage.getRecommendations(limit));
+  });
+
+  app.get("/api/recommendations/pending", (_req, res) => {
+    res.json(storage.getPendingRecommendations());
+  });
+
+  app.post("/api/recommendations/:id/decide", async (req, res) => {
+    const id = parseInt(req.params.id);
+    const { decision, modifiedShares, note } = req.body;
+    const updated = storage.updateRecommendationDecision(id, decision, modifiedShares, note);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+
+    // Recalculate trust score after every decision
+    try { await recalculateTrustScore(); } catch {}
+
+    res.json(updated);
+  });
+
+  // ── End-of-day pipeline (manual trigger + auto at 4:30pm ET) ────────────
+  app.post("/api/engine/eod", async (_req, res) => {
+    try {
+      const result = await runEODPipeline();
+      await recalculateTrustScore();
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/engine/recalculate", async (_req, res) => {
+    try {
+      await recalculateTrustScore();
+      res.json({ ok: true, trust: storage.getTrustMetrics() });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Exception Rules ───────────────────────────────────────────────────────
+  app.get("/api/exception-rules", (_req, res) => {
+    res.json(storage.getExceptionRules());
+  });
+  app.post("/api/exception-rules", (req, res) => {
+    res.json(storage.createExceptionRule({ ...req.body, createdAt: new Date().toISOString() }));
+  });
+  app.patch("/api/exception-rules/:id", (req, res) => {
+    const updated = storage.updateExceptionRule(parseInt(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    res.json(updated);
+  });
+  app.delete("/api/exception-rules/:id", (req, res) => {
+    storage.deleteExceptionRule(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ── Daily metrics ─────────────────────────────────────────────────────────
+  app.get("/api/metrics/daily", (_req, res) => {
+    res.json(storage.getDailyMetrics());
+  });
+
+  // ── After Action Reports ──────────────────────────────────────────────────
+  app.get("/api/reports", (req, res) => {
+    const type = req.query.type as string | undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 30;
+    res.json(storage.getAfterActionReports(type, limit));
+  });
+
+  app.post("/api/reports/generate", async (_req, res) => {
+    try {
+      await recalculateTrustScore();
+      const aar = await generateDailyAAR();
+      res.json(aar);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Trust Metrics ─────────────────────────────────────────────────────────
+  app.get("/api/trust-metrics", (_req, res) => {
+    res.json(storage.getTrustMetrics());
+  });
+
+  // ── Sentiment engine ─────────────────────────────────────────────────────
+  app.get("/api/sentiment", (req, res) => {
+    const ticker = req.query.ticker as string | undefined;
+    try {
+      if (ticker) {
+        const s = storage.getSentiment(ticker.toUpperCase());
+        return res.json(s ?? null);
+      }
+      // Return all cached tickers
+      const cached = storage.getAllSentiment();
+      res.json(cached);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/sentiment/refresh", async (req, res) => {
+    try {
+      const reqTickers = req.body?.tickers as string[] | undefined;
+      const pending = storage.getPendingRecommendations();
+      const positions = storage.getPositions();
+      const tickers = reqTickers ?? [...new Set([
+        ...pending.map(r => r.ticker),
+        ...positions.map(p => p.ticker),
+        "NVDA", "TSLA", "MSFT", "AMD", "AAPL", "META", "AMZN", "GOOGL",
+      ])];
+      const results = await analyzeSentiment(tickers);
+      for (const s of results) {
+        storage.upsertSentiment({
+          ticker: s.ticker, score: s.score, label: s.label, alertLevel: s.alertLevel,
+          alertReason: s.alertReason, articleCount: s.articleCount,
+          headlines: s.headlines, keySignals: s.keySignals,
+          marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
+        });
+      }
+      res.json({ refreshed: results.length, tickers: results.map(r => r.ticker), results });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/alerts", async (_req, res) => {
+    try {
+      const positions = storage.getPositions();
+      const pending = storage.getPendingRecommendations();
+      // Combine active positions + pending DAY trades for safety-net evaluation
+      const evalSet: { ticker: string; tradeStyle: string; currentPrice: number; entryPrice: number; stopLoss: number; targetPrice: number }[] = [];
+
+      for (const pos of positions) {
+        // For positions, approximate stop (-5%) and target (+8%) from avg cost
+        evalSet.push({
+          ticker: pos.ticker,
+          tradeStyle: "SWING", // default; override below if we have a matching rec
+          currentPrice: pos.currentPrice,
+          entryPrice: pos.avgCost,
+          stopLoss: pos.avgCost * 0.95,
+          targetPrice: pos.avgCost * 1.08,
+        });
+      }
+
+      // Override with actual stop/target from active recommendations where available
+      for (const rec of pending) {
+        const existing = evalSet.find(e => e.ticker === rec.ticker);
+        if (existing) {
+          existing.tradeStyle = rec.tradeStyle ?? "SWING";
+          existing.stopLoss   = rec.stopLoss;
+          existing.targetPrice = rec.targetPrice;
+        } else if (rec.tradeStyle === "DAY") {
+          // Include pending DAY trades even without an open position
+          evalSet.push({
+            ticker: rec.ticker,
+            tradeStyle: rec.tradeStyle ?? "DAY",
+            currentPrice: rec.priceAtRecommendation,
+            entryPrice: rec.priceAtRecommendation,
+            stopLoss: rec.stopLoss,
+            targetPrice: rec.targetPrice,
+          });
+        }
+      }
+
+      if (evalSet.length === 0) return res.json([]);
+
+      // Fetch sentiment for all relevant tickers (use cache first)
+      const tickerSet = evalSet.map(e => e.ticker);
+      const cachedSentiments = storage.getAllSentiment();
+      const sentMap: Record<string, any> = {};
+      for (const s of cachedSentiments) {
+        sentMap[s.ticker] = {
+          ticker: s.ticker,
+          score: s.score,
+          label: s.label,
+          articleCount: s.articleCount,
+          headlines: JSON.parse(s.headlines || "[]"),
+          keySignals: JSON.parse(s.keySignals || "[]"),
+          marketAuxScore: s.marketAuxScore,
+          alertLevel: s.alertLevel,
+          alertReason: s.alertReason,
+          updatedAt: s.updatedAt,
+        };
+      }
+
+      const alerts = evalSet.map(e => {
+        const sentiment = sentMap[e.ticker] ?? null;
+        return evaluateSafetyNet(e, sentiment);
+      });
+
+      // Sort by urgency: HIGH first
+      const urgencyOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+      alerts.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+
+      res.json(alerts);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  return httpServer;
+}

@@ -1,0 +1,373 @@
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import Database from "better-sqlite3";
+import { eq, desc, and, gte, lte, isNull, isNotNull } from "drizzle-orm";
+import {
+  betaSession, recommendations, positions, exceptionRules,
+  dailyMetrics, afterActionReports, trustMetrics,
+  type BetaSession, type Recommendation, type InsertRecommendation,
+  type Position, type InsertPosition, type ExceptionRule, type InsertExceptionRule,
+  type DailyMetrics, type AfterActionReport, type InsertAAR,
+  type TrustMetrics, type InsertTrustMetrics,
+} from "@shared/schema";
+
+// Use DATABASE_URL env var for cloud deployments (e.g. Railway volume at /data/gatekeeper.db)
+// Falls back to local file for development
+const DB_PATH = process.env.DATABASE_URL || "gatekeeper.db";
+const sqlite = new Database(DB_PATH);
+export const db = drizzle(sqlite);
+console.log(`[DB] SQLite opened at: ${DB_PATH}`);
+
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS beta_session (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_date TEXT NOT NULL,
+    start_equity REAL NOT NULL,
+    benchmark_start_price REAL NOT NULL,
+    days_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL, action TEXT NOT NULL, shares REAL NOT NULL,
+    price_at_recommendation REAL NOT NULL, target_price REAL NOT NULL,
+    stop_loss REAL NOT NULL, confidence TEXT NOT NULL, reasoning TEXT NOT NULL,
+    catalysts TEXT NOT NULL, upside_percent REAL NOT NULL, downside_percent REAL NOT NULL,
+    time_horizon TEXT NOT NULL,
+    trade_style TEXT, hold_days_min INTEGER, hold_days_max INTEGER,
+    hold_until_date TEXT, signal_strength REAL, signal_age INTEGER DEFAULT 0,
+    is_auto_trade INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    user_decision TEXT, modified_shares REAL, decision_note TEXT, decided_at TEXT,
+    expires_at TEXT NOT NULL, created_at TEXT NOT NULL,
+    outcome_price REAL, outcome_percent REAL, outcome_pnl REAL, phantom_pnl REAL,
+    ai_was_correct INTEGER, user_was_correct INTEGER,
+    resolved_at TEXT, resolved_price REAL, alpaca_order_id TEXT
+  );
+  CREATE TABLE IF NOT EXISTS positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
+    shares REAL NOT NULL, avg_cost REAL NOT NULL, current_price REAL NOT NULL,
+    market_value REAL NOT NULL, unrealized_pnl REAL NOT NULL,
+    unrealized_pct REAL NOT NULL, is_auto_managed INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS exception_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
+    volatility_threshold REAL NOT NULL DEFAULT 5,
+    max_auto_trade_percent REAL NOT NULL DEFAULT 15,
+    stop_loss_percent REAL NOT NULL DEFAULT 3,
+    accepted_loss_percent REAL NOT NULL DEFAULT 8,
+    profit_lock_percent REAL NOT NULL DEFAULT 15,
+    profit_lock_sell_percent REAL NOT NULL DEFAULT 50,
+    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS daily_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,
+    day_number INTEGER NOT NULL, portfolio_value REAL, equity_change REAL,
+    spy_close REAL, total_recommendations INTEGER NOT NULL DEFAULT 0,
+    approved_count INTEGER NOT NULL DEFAULT 0, rejected_count INTEGER NOT NULL DEFAULT 0,
+    modified_count INTEGER NOT NULL DEFAULT 0,
+    ai_correct_today INTEGER NOT NULL DEFAULT 0,
+    user_correct_today INTEGER NOT NULL DEFAULT 0,
+    actual_pnl_today REAL NOT NULL DEFAULT 0,
+    phantom_pnl_today REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS after_action_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, report_type TEXT NOT NULL,
+    period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+    day_number_start INTEGER, day_number_end INTEGER,
+    total_recommendations INTEGER NOT NULL, approved_count INTEGER NOT NULL,
+    rejected_count INTEGER NOT NULL, modified_count INTEGER NOT NULL,
+    auto_executed_count INTEGER NOT NULL DEFAULT 0,
+    ai_correct_count INTEGER NOT NULL, user_correct_count INTEGER NOT NULL,
+    ai_accuracy_pct REAL NOT NULL, user_accuracy_pct REAL NOT NULL,
+    actual_pnl REAL NOT NULL, phantom_pnl REAL NOT NULL,
+    roi_delta REAL NOT NULL, trust_score REAL NOT NULL,
+    behavioral_flags TEXT NOT NULL, biggest_miss TEXT, biggest_win TEXT,
+    subscription_verdict TEXT, narrative_summary TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS trust_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, trust_score REAL NOT NULL,
+    roi_delta REAL NOT NULL, portfolio_return REAL, benchmark_return REAL,
+    quadrant TEXT NOT NULL, subscription_verdict TEXT NOT NULL,
+    subscription_recommendation TEXT NOT NULL,
+    approval_rate REAL NOT NULL, ai_win_rate REAL NOT NULL,
+    user_win_rate REAL NOT NULL, total_decisions INTEGER NOT NULL DEFAULT 0,
+    days_active INTEGER NOT NULL,
+    auto_trade_count INTEGER NOT NULL DEFAULT 0,
+    auto_trade_wins INTEGER NOT NULL DEFAULT 0,
+    auto_trade_roi REAL NOT NULL DEFAULT 0,
+    auto_trade_win_rate REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  );
+`);
+
+// Sentiment cache table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS sentiment_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL UNIQUE,
+    score REAL NOT NULL,
+    label TEXT NOT NULL,
+    alert_level TEXT NOT NULL DEFAULT 'NONE',
+    alert_reason TEXT NOT NULL DEFAULT '',
+    article_count INTEGER NOT NULL DEFAULT 0,
+    headlines TEXT NOT NULL DEFAULT '[]',
+    key_signals TEXT NOT NULL DEFAULT '[]',
+    market_aux_score REAL,
+    updated_at TEXT NOT NULL
+  );
+`);
+
+// Live migrations — add new columns to existing tables if they don't exist
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN trade_style TEXT`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN hold_days_min INTEGER`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN hold_days_max INTEGER`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN hold_until_date TEXT`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN signal_strength REAL`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN signal_age INTEGER DEFAULT 0`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE recommendations ADD COLUMN is_auto_trade INTEGER DEFAULT 0`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE trust_metrics ADD COLUMN auto_trade_count INTEGER NOT NULL DEFAULT 0`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE trust_metrics ADD COLUMN auto_trade_wins INTEGER NOT NULL DEFAULT 0`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE trust_metrics ADD COLUMN auto_trade_roi REAL NOT NULL DEFAULT 0`);
+} catch {}
+try {
+  sqlite.exec(`ALTER TABLE trust_metrics ADD COLUMN auto_trade_win_rate REAL NOT NULL DEFAULT 0`);
+} catch {}
+
+export interface IStorage {
+  // Beta session
+  getBetaSession(): BetaSession | undefined;
+  createBetaSession(startEquity: number, spyPrice: number): BetaSession;
+  updateDaysActive(days: number): void;
+  // Recommendations
+  getRecommendations(limit?: number): Recommendation[];
+  getPendingRecommendations(): Recommendation[];
+  getRecommendationById(id: number): Recommendation | undefined;
+  getUnresolvedDecided(): Recommendation[];
+  createRecommendation(data: InsertRecommendation): Recommendation;
+  updateRecommendationDecision(id: number, decision: string, modifiedShares?: number, note?: string): Recommendation | undefined;
+  resolveRecommendation(id: number, resolvedPrice: number, outcomePct: number, outcomePnl: number, phantomPnl: number, aiCorrect: number, userCorrect: number): Recommendation | undefined;
+  setAlpacaOrderId(id: number, orderId: string): void;
+  expireOldRecommendations(): number;
+  // Positions
+  getPositions(): Position[];
+  upsertPosition(data: InsertPosition): Position;
+  clearPositions(): void;
+  // Exception Rules
+  getExceptionRules(): ExceptionRule[];
+  createExceptionRule(data: InsertExceptionRule): ExceptionRule;
+  updateExceptionRule(id: number, data: Partial<InsertExceptionRule>): ExceptionRule | undefined;
+  deleteExceptionRule(id: number): void;
+  // Daily metrics
+  getDailyMetrics(limit?: number): DailyMetrics[];
+  upsertTodayMetrics(data: Partial<DailyMetrics>): void;
+  // AAR
+  getAfterActionReports(type?: string, limit?: number): AfterActionReport[];
+  createAAR(data: InsertAAR): AfterActionReport;
+  // Trust
+  getTrustMetrics(): TrustMetrics | undefined;
+  upsertTrustMetrics(data: InsertTrustMetrics): TrustMetrics;
+  // Sentiment
+  getSentiment(ticker: string): any | undefined;
+  getAllSentiment(): any[];
+  upsertSentiment(data: any): void;
+}
+
+export class Storage implements IStorage {
+  // Beta session
+  getBetaSession() {
+    return db.select().from(betaSession).get();
+  }
+  createBetaSession(startEquity: number, spyPrice: number): BetaSession {
+    return db.insert(betaSession).values({
+      startDate: new Date().toISOString().split("T")[0],
+      startEquity,
+      benchmarkStartPrice: spyPrice,
+      daysActive: 1,
+      createdAt: new Date().toISOString(),
+    }).returning().get();
+  }
+  updateDaysActive(days: number) {
+    const session = this.getBetaSession();
+    if (session) db.update(betaSession).set({ daysActive: days }).where(eq(betaSession.id, session.id)).run();
+  }
+
+  // Recommendations
+  getRecommendations(limit = 100) {
+    return db.select().from(recommendations).orderBy(desc(recommendations.createdAt)).limit(limit).all();
+  }
+  getPendingRecommendations() {
+    return db.select().from(recommendations).where(eq(recommendations.status, "PENDING")).orderBy(desc(recommendations.createdAt)).all();
+  }
+  getRecommendationById(id: number) {
+    return db.select().from(recommendations).where(eq(recommendations.id, id)).get();
+  }
+  getUnresolvedDecided() {
+    // Decided (approved/rejected/modified) but not yet resolved at end of day
+    return db.select().from(recommendations)
+      .where(and(
+        isNotNull(recommendations.userDecision),
+        isNull(recommendations.resolvedAt)
+      ))
+      .all();
+  }
+  createRecommendation(data: InsertRecommendation) {
+    return db.insert(recommendations).values(data).returning().get();
+  }
+  updateRecommendationDecision(id: number, decision: string, modifiedShares?: number, note?: string) {
+    const status = decision === "MODIFIED" ? "MODIFIED" : decision === "APPROVED" ? "APPROVED" : "REJECTED";
+    return db.update(recommendations).set({
+      status, userDecision: decision,
+      modifiedShares: modifiedShares ?? null,
+      decisionNote: note ?? null,
+      decidedAt: new Date().toISOString(),
+    }).where(eq(recommendations.id, id)).returning().get();
+  }
+  resolveRecommendation(id: number, resolvedPrice: number, outcomePct: number, outcomePnl: number, phantomPnl: number, aiCorrect: number, userCorrect: number) {
+    return db.update(recommendations).set({
+      resolvedPrice, outcomePercent: outcomePct, outcomePnl, phantomPnl,
+      aiWasCorrect: aiCorrect, userWasCorrect: userCorrect,
+      resolvedAt: new Date().toISOString(),
+    }).where(eq(recommendations.id, id)).returning().get();
+  }
+  setAlpacaOrderId(id: number, orderId: string) {
+    db.update(recommendations).set({ alpacaOrderId: orderId }).where(eq(recommendations.id, id)).run();
+  }
+  expireOldRecommendations() {
+    const now = new Date().toISOString();
+    const expired = db.select().from(recommendations)
+      .where(and(eq(recommendations.status, "PENDING"), lte(recommendations.expiresAt, now)))
+      .all();
+    for (const r of expired) {
+      db.update(recommendations).set({ status: "EXPIRED" }).where(eq(recommendations.id, r.id)).run();
+    }
+    return expired.length;
+  }
+
+  // Positions
+  getPositions() { return db.select().from(positions).all(); }
+  upsertPosition(data: InsertPosition) {
+    const ex = db.select().from(positions).where(eq(positions.ticker, data.ticker)).get();
+    if (ex) return db.update(positions).set(data).where(eq(positions.ticker, data.ticker)).returning().get();
+    return db.insert(positions).values(data).returning().get();
+  }
+  clearPositions() { db.delete(positions).run(); }
+
+  // Exception rules
+  getExceptionRules() { return db.select().from(exceptionRules).all(); }
+  createExceptionRule(data: InsertExceptionRule) { return db.insert(exceptionRules).values(data).returning().get(); }
+  updateExceptionRule(id: number, data: Partial<InsertExceptionRule>) {
+    return db.update(exceptionRules).set(data).where(eq(exceptionRules.id, id)).returning().get();
+  }
+  deleteExceptionRule(id: number) { db.delete(exceptionRules).where(eq(exceptionRules.id, id)).run(); }
+
+  // Daily metrics
+  getDailyMetrics(limit = 90) {
+    return db.select().from(dailyMetrics).orderBy(desc(dailyMetrics.date)).limit(limit).all();
+  }
+  upsertTodayMetrics(data: Partial<DailyMetrics>) {
+    const today = new Date().toISOString().split("T")[0];
+    const ex = db.select().from(dailyMetrics).where(eq(dailyMetrics.date, today)).get();
+    if (ex) {
+      db.update(dailyMetrics).set(data).where(eq(dailyMetrics.date, today)).run();
+    } else {
+      db.insert(dailyMetrics).values({ ...data as any, date: today, createdAt: new Date().toISOString() }).run();
+    }
+  }
+
+  // AAR
+  getAfterActionReports(type?: string, limit = 30) {
+    if (type) return db.select().from(afterActionReports).where(eq(afterActionReports.reportType, type)).orderBy(desc(afterActionReports.createdAt)).limit(limit).all();
+    return db.select().from(afterActionReports).orderBy(desc(afterActionReports.createdAt)).limit(limit).all();
+  }
+  createAAR(data: InsertAAR) { return db.insert(afterActionReports).values(data).returning().get(); }
+
+  // Trust
+  getTrustMetrics() { return db.select().from(trustMetrics).orderBy(desc(trustMetrics.updatedAt)).get(); }
+  upsertTrustMetrics(data: InsertTrustMetrics) {
+    const ex = db.select().from(trustMetrics).get();
+    if (ex) return db.update(trustMetrics).set(data).where(eq(trustMetrics.id, ex.id)).returning().get();
+    return db.insert(trustMetrics).values(data).returning().get();
+  }
+
+  // Sentiment — raw SQLite (Drizzle schema not imported here to keep it simple)
+  private _parseSentimentRow(r: any) {
+    // Safely parse a field that may be a JSON string, double-encoded string, or already an array
+    const parseField = (val: any): string[] => {
+      if (Array.isArray(val)) return val;
+      if (typeof val !== "string" || val === "") return [];
+      try {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) return parsed;
+        // Double-encoded: JSON.parse again
+        if (typeof parsed === "string") {
+          const inner = JSON.parse(parsed);
+          return Array.isArray(inner) ? inner : [];
+        }
+        return [];
+      } catch { return []; }
+    };
+    return {
+      ticker: r.ticker,
+      score: r.score,
+      label: r.label,
+      alertLevel: r.alert_level,
+      alertReason: r.alert_reason,
+      articleCount: r.article_count,
+      headlines: parseField(r.headlines),
+      keySignals: parseField(r.key_signals),
+      marketAuxScore: r.market_aux_score,
+      updatedAt: r.updated_at,
+    };
+  }
+  getSentiment(ticker: string): any | undefined {
+    const row = sqlite.prepare("SELECT * FROM sentiment_cache WHERE ticker = ?").get(ticker) as any;
+    return row ? this._parseSentimentRow(row) : undefined;
+  }
+  getAllSentiment(): any[] {
+    const rows = sqlite.prepare("SELECT * FROM sentiment_cache ORDER BY updated_at DESC").all() as any[];
+    return rows.map(r => this._parseSentimentRow(r));
+  }
+  upsertSentiment(data: any): void {
+    const ex = sqlite.prepare("SELECT id FROM sentiment_cache WHERE ticker = ?").get(data.ticker);
+    if (ex) {
+      sqlite.prepare(`UPDATE sentiment_cache SET score=?, label=?, alert_level=?, alert_reason=?,
+        article_count=?, headlines=?, key_signals=?, market_aux_score=?, updated_at=? WHERE ticker=?`
+      ).run(
+        data.score, data.label, data.alertLevel, data.alertReason,
+        data.articleCount, JSON.stringify(data.headlines), JSON.stringify(data.keySignals),
+        data.marketAuxScore ?? null, data.updatedAt, data.ticker
+      );
+    } else {
+      sqlite.prepare(`INSERT INTO sentiment_cache
+        (ticker, score, label, alert_level, alert_reason, article_count, headlines, key_signals, market_aux_score, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        data.ticker, data.score, data.label, data.alertLevel, data.alertReason,
+        data.articleCount, JSON.stringify(data.headlines), JSON.stringify(data.keySignals),
+        data.marketAuxScore ?? null, data.updatedAt
+      );
+    }
+  }
+}
+
+export const storage = new Storage();
