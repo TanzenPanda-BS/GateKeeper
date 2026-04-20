@@ -272,8 +272,20 @@ export default function DecisionGate() {
   const { toast } = useToast();
 
   const decideMutation = useMutation({
-    mutationFn: ({ id, decision, modifiedShares, note }: { id: number; decision: string; modifiedShares?: number; note?: string }) =>
-      apiRequest("POST", `/api/recommendations/${id}/decide`, { decision, modifiedShares, note }),
+    mutationFn: async ({ id, decision, modifiedShares, note }: { id: number; decision: string; modifiedShares?: number; note?: string }) => {
+      // Auto-retry once on 503 (Railway cold start) with a 4-second pause
+      try {
+        return await apiRequest("POST", `/api/recommendations/${id}/decide`, { decision, modifiedShares, note });
+      } catch (e: any) {
+        const is503 = e.message?.includes("503") || e.message?.includes("Service Unavailable") || e.message?.includes("unavailable");
+        if (is503) {
+          toast({ title: "Server warming up…", description: "Railway is starting — retrying your decision in 4 seconds. Do not close this tab.", variant: "default" });
+          await new Promise(r => setTimeout(r, 4000));
+          return await apiRequest("POST", `/api/recommendations/${id}/decide`, { decision, modifiedShares, note });
+        }
+        throw e;
+      }
+    },
     onSuccess: async (updated: any, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations"] });
@@ -291,6 +303,19 @@ export default function DecisionGate() {
       setModShares("");
       setNote("");
       setActiveIdx(0);
+    },
+    onError: (e: any) => {
+      // Decision was NOT recorded — card stays visible, user can retry
+      const is503 = e.message?.includes("503") || e.message?.includes("Service Unavailable") || e.message?.includes("unavailable");
+      toast({
+        title: is503 ? "Server unavailable — decision NOT recorded" : "Decision failed — please try again",
+        description: is503
+          ? "Railway server is starting up. Wait 10–20 seconds and try again — your signal is still here."
+          : `Error: ${e.message}. Your signal has not been lost.`,
+        variant: "destructive",
+      });
+      // Re-fetch pending to ensure the card reappears if it was optimistically removed
+      queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });
     },
   });
 
@@ -458,7 +483,8 @@ export default function DecisionGate() {
                   onClick={() => decideMutation.mutate({ id: rec.id, decision: "APPROVED" })}
                   disabled={decideMutation.isPending}
                 >
-                  <CheckCircle className="w-4 h-4" />Approve & Execute
+                  <CheckCircle className="w-4 h-4" />
+                  {decideMutation.isPending ? "Submitting…" : "Approve & Execute"}
                 </Button>
                 {mode === "modify" ? (
                   <Button
@@ -487,7 +513,8 @@ export default function DecisionGate() {
                   onClick={() => decideMutation.mutate({ id: rec.id, decision: "REJECTED", note })}
                   disabled={decideMutation.isPending}
                 >
-                  <XCircle className="w-4 h-4" />Reject
+                  <XCircle className="w-4 h-4" />
+                  {decideMutation.isPending ? "Submitting…" : "Reject"}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground text-center">
