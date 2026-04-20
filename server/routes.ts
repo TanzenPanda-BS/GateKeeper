@@ -8,6 +8,7 @@ import {
 import {
   runEODPipeline, recalculateTrustScore, generateDailyAAR
 } from "./engine";
+import { detectEarningsProximity } from "./earnings";
 import { analyzeSentiment, evaluateSafetyNet } from "./sentiment";
 
 // ── Bootstrap: initialize beta session on first run ──────────────────────────
@@ -171,15 +172,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const expiresAt = new Date(now.getTime() + 4 * 3600000).toISOString();
       const created: any[] = [];
 
+      // P7: fetch earnings proximity flags for all tickers at once
+      const earningsFlags = await detectEarningsProximity(signals.map(s => s.ticker));
+
       for (const sig of signals) {
+        // P6: Skip if ticker is within an active approved hold window
+        const activeHold = storage.getActiveHoldForTicker(sig.ticker);
+        if (activeHold) {
+          console.log(`[P6] Skipping ${sig.ticker} signal — within hold window until ${activeHold.holdUntilDate}`);
+          continue;
+        }
+
         const existing = storage.getPendingRecommendations().find(r => r.ticker === sig.ticker);
         if (existing) continue;
+
+        // P7: Attach earnings flag to signal reasoning if detected
+        const earningsFlag = earningsFlags[sig.ticker];
+        let reasoning = sig.reasoning;
+        let catalysts = sig.catalysts;
+        if (earningsFlag) {
+          reasoning = `⚠️ EARNINGS PROXIMITY (${earningsFlag.daysOut === 0 ? 'today' : `~${earningsFlag.daysOut}d`}): ${earningsFlag.note} | ` + reasoning;
+          catalysts = [`Earnings alert: ${earningsFlag.note}`, ...catalysts];
+        }
+
         const rec = storage.createRecommendation({
           ticker: sig.ticker, action: sig.action, shares: sig.shares,
           priceAtRecommendation: sig.priceAtRecommendation,
           targetPrice: sig.targetPrice, stopLoss: sig.stopLoss,
-          confidence: sig.confidence, reasoning: sig.reasoning,
-          catalysts: JSON.stringify(sig.catalysts),
+          confidence: sig.confidence, reasoning,
+          catalysts: JSON.stringify(catalysts),
           upsidePercent: sig.upsidePercent, downsidePercent: sig.downsidePercent,
           timeHorizon: sig.timeHorizon,
           tradeStyle: sig.tradeStyle,

@@ -70,6 +70,16 @@ export default function Sidebar() {
         })}
       </nav>
 
+      {/* Onboarding link */}
+      <div className="px-3 pb-2">
+        <Link href="/onboarding">
+          <a className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Setup Guide
+          </a>
+        </Link>
+      </div>
+
       {/* Bottom status */}
       <div className="px-4 py-4 border-t border-border">
         <div className="flex items-center gap-2 mb-1">

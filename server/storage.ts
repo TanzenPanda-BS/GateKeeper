@@ -178,6 +178,8 @@ export interface IStorage {
   getRecommendations(limit?: number): Recommendation[];
   getPendingRecommendations(): Recommendation[];
   getRecommendationById(id: number): Recommendation | undefined;
+  // P6: hold window — returns active hold entries (APPROVED/RESOLVED) for ticker
+  getActiveHoldForTicker(ticker: string): Recommendation | undefined;
   getUnresolvedDecided(): Recommendation[];
   createRecommendation(data: InsertRecommendation): Recommendation;
   updateRecommendationDecision(id: number, decision: string, modifiedShares?: number, note?: string): Recommendation | undefined;
@@ -244,6 +246,48 @@ export class Storage implements IStorage {
   }
   getRecommendationById(id: number) {
     return db.select().from(recommendations).where(eq(recommendations.id, id)).get();
+  }
+  // P6: Check if a ticker is within its approved hold window
+  getActiveHoldForTicker(ticker: string): Recommendation | undefined {
+    const today = new Date().toISOString().split("T")[0];
+    // Find the most recent APPROVED or MODIFIED rec for this ticker that has a holdUntilDate in the future
+    const rows = sqlite.prepare(`
+      SELECT * FROM recommendations
+      WHERE ticker = ?
+        AND status IN ('APPROVED', 'MODIFIED')
+        AND hold_until_date >= ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).all(ticker, today) as any[];
+    if (!rows.length) return undefined;
+    const r = rows[0];
+    // Map snake_case DB columns back to camelCase
+    return {
+      ...r,
+      holdUntilDate: r.hold_until_date,
+      priceAtRecommendation: r.price_at_recommendation,
+      targetPrice: r.target_price,
+      stopLoss: r.stop_loss,
+      upsidePercent: r.upside_percent,
+      downsidePercent: r.downside_percent,
+      timeHorizon: r.time_horizon,
+      tradeStyle: r.trade_style,
+      holdDaysMin: r.hold_days_min,
+      holdDaysMax: r.hold_days_max,
+      signalStrength: r.signal_strength,
+      signalAge: r.signal_age,
+      isAutoTrade: r.is_auto_trade,
+      userDecision: r.user_decision,
+      resolvedAt: r.resolved_at,
+      resolvedPrice: r.resolved_price,
+      outcomePct: r.outcome_pct,
+      outcomePnl: r.outcome_pnl,
+      phantomPnl: r.phantom_pnl,
+      aiCorrect: r.ai_correct,
+      userCorrect: r.user_correct,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+    } as Recommendation;
   }
   getUnresolvedDecided() {
     // Decided (approved/rejected/modified) but not yet resolved at end of day
