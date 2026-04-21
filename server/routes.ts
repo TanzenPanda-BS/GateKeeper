@@ -119,8 +119,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         storage.upsertSentiment({
           ticker: s.ticker, score: s.score, label: s.label, alertLevel: s.alertLevel,
           alertReason: s.alertReason, articleCount: s.articleCount,
-          headlines: s.headlines, keySignals: s.keySignals,
-          marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
+          headlines: s.headlines, taggedHeadlines: s.taggedHeadlines ?? [],
+          keySignals: s.keySignals, marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
         });
       }
       console.log(`[SENTIMENT] Refreshed ${results.length} tickers`);
@@ -375,8 +375,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         storage.upsertSentiment({
           ticker: s.ticker, score: s.score, label: s.label, alertLevel: s.alertLevel,
           alertReason: s.alertReason, articleCount: s.articleCount,
-          headlines: s.headlines, keySignals: s.keySignals,
-          marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
+          headlines: s.headlines, taggedHeadlines: s.taggedHeadlines ?? [],
+          keySignals: s.keySignals, marketAuxScore: s.marketAuxScore ?? null, updatedAt: s.updatedAt,
         });
         // Snapshot to history for the 7-day chart (P4)
         storage.addSentimentSnapshot(s.ticker, s.score, s.alertLevel);

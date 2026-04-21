@@ -8,6 +8,12 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 // ── Types ────────────────────────────────────────────────────────────────────
+interface TaggedHeadline {
+  text: string;
+  signal: "BULL" | "BEAR" | "NEUTRAL";
+  reason: string;
+}
+
 interface SentimentRow {
   ticker: string;
   score: number;
@@ -16,6 +22,7 @@ interface SentimentRow {
   alertReason: string;
   articleCount: number;
   headlines: string[];
+  taggedHeadlines: TaggedHeadline[];
   keySignals: string[];
   marketAuxScore: number | null;
   updatedAt: string;
@@ -391,29 +398,65 @@ export default function SentimentPage() {
                 </Card>
               )}
 
-              {/* Headlines */}
-              {selected.headlines && selected.headlines.length > 0 && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Newspaper className="w-4 h-4" />
-                      Recent Headlines
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {selected.headlines.slice(0, 6).map((h: string, i: number) => (
-                      <div key={i} className="text-xs text-muted-foreground leading-relaxed border-l-2 border-border pl-2">
-                        {h}
-                      </div>
-                    ))}
-                    {selected.articleCount > 6 && (
-                      <div className="text-xs text-muted-foreground/50">
-                        +{selected.articleCount - 6} more articles analyzed
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
+              {/* Headlines — Bull/Bear Signal Cards */}
+              {(() => {
+                const tagged: TaggedHeadline[] = Array.isArray(selected.taggedHeadlines) && selected.taggedHeadlines.length > 0
+                  ? selected.taggedHeadlines
+                  : (selected.headlines ?? []).map((h: string) => ({ text: h, signal: "NEUTRAL" as const, reason: "No directional signal" }));
+                if (tagged.length === 0) return null;
+                return (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Newspaper className="w-4 h-4" />
+                        Headline Signal Analysis
+                        <span className="text-xs font-normal text-muted-foreground ml-auto">{tagged.length} headlines</span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {tagged.slice(0, 6).map((h: TaggedHeadline, i: number) => {
+                        const isBull = h.signal === "BULL";
+                        const isBear = h.signal === "BEAR";
+                        return (
+                          <div key={i} className={`rounded-lg border p-2.5 ${
+                            isBull ? "bg-green-500/5 border-green-500/20" :
+                            isBear ? "bg-red-500/5 border-red-500/20" :
+                            "bg-secondary/30 border-border"
+                          }`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-xs font-bold flex items-center gap-1 ${
+                                isBull ? "text-green-400" : isBear ? "text-red-400" : "text-muted-foreground"
+                              }`}>
+                                {isBull ? (
+                                  <svg viewBox="0 0 20 20" className="w-3.5 h-3.5 fill-current" aria-label="Bull">
+                                    <path d="M10 2C8.5 2 7.2 2.6 6.3 3.6L4 3a1 1 0 0 0-.9 1.4l1 2.1C3.4 7.4 3 8.7 3 10c0 1 .2 2 .6 2.8L2.3 15a1 1 0 0 0 .9 1.5l2-.3c1 .5 2.1.8 3.3.8h3c1.2 0 2.3-.3 3.3-.8l2 .3a1 1 0 0 0 .9-1.5l-1.3-2.2c.4-.8.6-1.8.6-2.8 0-1.3-.4-2.6-1.1-3.5l1-2.1A1 1 0 0 0 16 3l-2.3.6C12.8 2.6 11.5 2 10 2zm0 2c.8 0 1.5.3 2 .8L10 6 8 4.8C8.5 4.3 9.2 4 10 4zm-3 5a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm4 0a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm-2 3h2c0 .6-.4 1-1 1s-1-.4-1-1z"/>
+                                  </svg>
+                                ) : isBear ? (
+                                  <svg viewBox="0 0 20 20" className="w-3.5 h-3.5 fill-current" aria-label="Bear">
+                                    <path d="M5 3a2 2 0 0 0-2 2c0 .7.4 1.4 1 1.7V8C4 11.9 6.7 15 10 15s6-3.1 6-7V6.7c.6-.3 1-1 1-1.7a2 2 0 0 0-2-2c-.8 0-1.5.5-1.8 1.2A7 7 0 0 0 10 4c-.8 0-1.6.1-2.2.2C7.5 3.5 6.8 3 6 3H5zm2 6a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm4 0a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm-3 3h2a1 1 0 0 1-2 0zM6 17a1 1 0 0 1 1-1h6a1 1 0 0 1 0 2H7a1 1 0 0 1-1-1z"/>
+                                  </svg>
+                                ) : (
+                                  <Minus className="w-3 h-3" />
+                                )}
+                                {h.signal}
+                              </span>
+                              <span className={`text-xs ${
+                                isBull ? "text-green-300/70" : isBear ? "text-red-300/70" : "text-muted-foreground/60"
+                              }`}>{h.reason}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">{h.text}</p>
+                          </div>
+                        );
+                      })}
+                      {selected.articleCount > 6 && (
+                        <div className="text-xs text-muted-foreground/50 text-center pt-1">
+                          +{selected.articleCount - 6} more articles analyzed
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })()}
             </>
           )}
         </div>

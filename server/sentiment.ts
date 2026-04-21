@@ -139,12 +139,75 @@ async function fetchMarketAux(tickers: string[]): Promise<Record<string, number>
 
 // ── Main sentiment analysis function ─────────────────────────────────────────
 
+// ── Headline classifier ───────────────────────────────────────────────────────
+// Classifies a single headline as BULL / BEAR / NEUTRAL and returns a short
+// human-readable reason phrase summarising WHY it was classified that way.
+// Uses the existing keyword vocabulary so no extra API calls are needed.
+
+const BULL_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /beat|beats|topped?|crushes?|smashes?|blowout/i,      reason: "Earnings/revenue beat expectations" },
+  { pattern: /upgrad(e|ed|es)/i,                                    reason: "Analyst upgrade" },
+  { pattern: /strong buy|buy rating|overweight|outperform/i,        reason: "Bullish analyst rating" },
+  { pattern: /record (high|revenue|profit|earn)/i,                  reason: "Record performance" },
+  { pattern: /breakout|breakthrough/i,                              reason: "Technical or product breakout" },
+  { pattern: /partner(ship)?|deal|contract|agreement/i,             reason: "Partnership or contract news" },
+  { pattern: /FDA approv|approv(al|ed)/i,                           reason: "Regulatory approval" },
+  { pattern: /buyback|share repurchase/i,                           reason: "Buyback signals confidence" },
+  { pattern: /raised? guidance|raise(d|s)? (outlook|forecast)/i,    reason: "Guidance raised" },
+  { pattern: /surges?|soars?|rockets?|jumps?|rallies?|rally/i,      reason: "Sharp price momentum upward" },
+  { pattern: /profit|revenue|earn(ing|ings) (rise|grow|jump|beat)/i,reason: "Strong financials" },
+  { pattern: /invests?|investment|expands?|expansion|launch(es)?/i, reason: "Growth investment or launch" },
+  { pattern: /AI|artificial intelligence.*(partner|deal|invest)/i,  reason: "AI partnership or deal" },
+];
+
+const BEAR_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /misses?|missed|disappoints?|falls? short/i,           reason: "Missed earnings or guidance" },
+  { pattern: /downgrad(e|ed|es)/i,                                  reason: "Analyst downgrade" },
+  { pattern: /sell rating|underperform|underweight/i,               reason: "Bearish analyst rating" },
+  { pattern: /lawsuit|sued|litigation|legal action/i,               reason: "Legal or litigation risk" },
+  { pattern: /investigation|probe|SEC|DOJ|regulat/i,                reason: "Regulatory investigation" },
+  { pattern: /recall|safety concern|defect/i,                       reason: "Product recall or safety issue" },
+  { pattern: /layoff|lay off|job cut|workforce reduction/i,         reason: "Layoffs or cost cuts" },
+  { pattern: /bankrupt|default|insolvency/i,                        reason: "Financial distress" },
+  { pattern: /fraud|scandal|mislead/i,                              reason: "Fraud or misconduct allegation" },
+  { pattern: /cut(s)? guidance|lower(s|ed)? (outlook|forecast)/i,   reason: "Guidance cut" },
+  { pattern: /crashes?|plunges?|collapses?|tanks?|drops? sharply/i, reason: "Sharp price decline" },
+  { pattern: /tariff|sanction|trade war|ban|blocked/i,              reason: "Trade or regulatory headwind" },
+  { pattern: /loss(es)?|deficit|write.?down|impairment/i,           reason: "Reported losses or writedowns" },
+  { pattern: /warning|caution|risk(s)?|headwind/i,                  reason: "Management warning or risk flagged" },
+];
+
+export interface TaggedHeadline {
+  text:    string;
+  signal:  "BULL" | "BEAR" | "NEUTRAL";
+  reason:  string;
+}
+
+export function classifyHeadline(headline: string): TaggedHeadline {
+  for (const { pattern, reason } of BULL_PATTERNS) {
+    if (pattern.test(headline)) {
+      return { text: headline, signal: "BULL", reason };
+    }
+  }
+  for (const { pattern, reason } of BEAR_PATTERNS) {
+    if (pattern.test(headline)) {
+      return { text: headline, signal: "BEAR", reason };
+    }
+  }
+  // Fall back to keyword score for borderline cases
+  const { score } = keywordSentiment(headline);
+  if (score >= 0.15)  return { text: headline, signal: "BULL",    reason: "Positive keyword signals detected" };
+  if (score <= -0.15) return { text: headline, signal: "BEAR",    reason: "Negative keyword signals detected" };
+  return               { text: headline, signal: "NEUTRAL", reason: "No strong directional signal" };
+}
+
 export interface TickerSentiment {
   ticker:           string;
   score:            number;        // -1 to +1 (negative = bearish)
   label:            "BULLISH" | "NEUTRAL" | "BEARISH";
   articleCount:     number;
-  headlines:        string[];      // top 3 most recent
+  headlines:        string[];          // kept as string[] for DB storage (JSON)
+  taggedHeadlines:  TaggedHeadline[];  // classified headlines for display
   keySignals:       string[];      // top bullish/bearish keywords found
   marketAuxScore:   number | null; // MarketAux score if available
   hoursScanned:     number;
@@ -180,12 +243,17 @@ export async function analyzeSentiment(tickers: string[] = TICKERS): Promise<Tic
     const allSignals: string[] = [];
     const headlines: string[] = [];
 
+    const taggedHeadlines: TaggedHeadline[] = [];
+
     for (const article of tickerArticles.slice(0, 10)) {
       const text  = `${article.headline} ${article.summary}`;
       const { score, signals } = keywordSentiment(text);
       scores.push(score);
       allSignals.push(...signals);
-      if (headlines.length < 3) headlines.push(article.headline);
+      if (headlines.length < 5) {
+        headlines.push(article.headline);
+        taggedHeadlines.push(classifyHeadline(article.headline));
+      }
     }
 
     // Weighted average: MarketAux score (if available) gets 40% weight
@@ -235,14 +303,15 @@ export async function analyzeSentiment(tickers: string[] = TICKERS): Promise<Tic
 
     results.push({
       ticker,
-      score:         Math.round(finalScore * 100) / 100,
+      score:          Math.round(finalScore * 100) / 100,
       label,
-      articleCount:  tickerArticles.length,
+      articleCount:   tickerArticles.length,
       headlines,
-      keySignals:    uniqueSignals,
+      taggedHeadlines,
+      keySignals:     uniqueSignals,
       marketAuxScore: mauxScore,
-      hoursScanned:  6,
-      updatedAt:     new Date().toISOString(),
+      hoursScanned:   6,
+      updatedAt:      new Date().toISOString(),
       alertLevel,
       alertReason,
     });

@@ -113,6 +113,7 @@ sqlite.exec(`
     alert_reason TEXT NOT NULL DEFAULT '',
     article_count INTEGER NOT NULL DEFAULT 0,
     headlines TEXT NOT NULL DEFAULT '[]',
+    tagged_headlines TEXT NOT NULL DEFAULT '[]',
     key_signals TEXT NOT NULL DEFAULT '[]',
     market_aux_score REAL,
     updated_at TEXT NOT NULL
@@ -168,6 +169,9 @@ try {
 try {
   sqlite.exec(`ALTER TABLE trust_metrics ADD COLUMN auto_trade_win_rate REAL NOT NULL DEFAULT 0`);
 } catch {}
+// tagged_headlines column on sentiment_cache (added in Bull/Bear feature)
+try { sqlite.exec(`ALTER TABLE sentiment_cache ADD COLUMN tagged_headlines TEXT NOT NULL DEFAULT '[]'`); } catch {}
+
 // Trailing stop columns on positions
 try { sqlite.exec(`ALTER TABLE positions ADD COLUMN stop_loss_floor REAL`); } catch {}
 try { sqlite.exec(`ALTER TABLE positions ADD COLUMN trail_pct REAL`); } catch {}
@@ -429,6 +433,14 @@ export class Storage implements IStorage {
         return [];
       } catch { return []; }
     };
+    const parseTaggedHeadlines = (val: any): any[] => {
+      if (Array.isArray(val)) return val;
+      if (typeof val !== "string" || val === "") return [];
+      try {
+        const parsed = JSON.parse(val);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch { return []; }
+    };
     return {
       ticker: r.ticker,
       score: r.score,
@@ -437,6 +449,7 @@ export class Storage implements IStorage {
       alertReason: r.alert_reason,
       articleCount: r.article_count,
       headlines: parseField(r.headlines),
+      taggedHeadlines: parseTaggedHeadlines(r.tagged_headlines),
       keySignals: parseField(r.key_signals),
       marketAuxScore: r.market_aux_score,
       updatedAt: r.updated_at,
@@ -452,22 +465,23 @@ export class Storage implements IStorage {
   }
   upsertSentiment(data: any): void {
     const ex = sqlite.prepare("SELECT id FROM sentiment_cache WHERE ticker = ?").get(data.ticker);
+    const taggedHeadlinesJson = JSON.stringify(data.taggedHeadlines ?? []);
     if (ex) {
       sqlite.prepare(`UPDATE sentiment_cache SET score=?, label=?, alert_level=?, alert_reason=?,
-        article_count=?, headlines=?, key_signals=?, market_aux_score=?, updated_at=? WHERE ticker=?`
+        article_count=?, headlines=?, tagged_headlines=?, key_signals=?, market_aux_score=?, updated_at=? WHERE ticker=?`
       ).run(
         data.score, data.label, data.alertLevel, data.alertReason,
-        data.articleCount, JSON.stringify(data.headlines), JSON.stringify(data.keySignals),
-        data.marketAuxScore ?? null, data.updatedAt, data.ticker
+        data.articleCount, JSON.stringify(data.headlines), taggedHeadlinesJson,
+        JSON.stringify(data.keySignals), data.marketAuxScore ?? null, data.updatedAt, data.ticker
       );
     } else {
       sqlite.prepare(`INSERT INTO sentiment_cache
-        (ticker, score, label, alert_level, alert_reason, article_count, headlines, key_signals, market_aux_score, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`
+        (ticker, score, label, alert_level, alert_reason, article_count, headlines, tagged_headlines, key_signals, market_aux_score, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`
       ).run(
         data.ticker, data.score, data.label, data.alertLevel, data.alertReason,
-        data.articleCount, JSON.stringify(data.headlines), JSON.stringify(data.keySignals),
-        data.marketAuxScore ?? null, data.updatedAt
+        data.articleCount, JSON.stringify(data.headlines), taggedHeadlinesJson,
+        JSON.stringify(data.keySignals), data.marketAuxScore ?? null, data.updatedAt
       );
     }
   }

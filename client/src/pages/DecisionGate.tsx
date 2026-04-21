@@ -344,9 +344,27 @@ function SentimentPanel({ ticker }: { ticker: string }) {
 
   const { pct, color: barColor } = scoreBar(sentiment.score);
   const alertLevel = sentiment.alertLevel ?? "NONE";
-  const headlines: string[] = Array.isArray(sentiment.headlines) ? sentiment.headlines : [];
   const keySignals: string[] = Array.isArray(sentiment.keySignals) ? sentiment.keySignals : [];
   const updatedAgo = sentiment.updatedAt ? Math.floor((Date.now() - new Date(sentiment.updatedAt).getTime()) / 60000) : null;
+
+  // Build tagged headlines: prefer taggedHeadlines from server, fall back to plain headlines as NEUTRAL
+  interface TaggedHL { text: string; signal: "BULL" | "BEAR" | "NEUTRAL"; reason: string; }
+  const taggedHeadlines: TaggedHL[] = Array.isArray(sentiment.taggedHeadlines) && sentiment.taggedHeadlines.length > 0
+    ? sentiment.taggedHeadlines
+    : (Array.isArray(sentiment.headlines) ? sentiment.headlines : []).map((h: string) => ({
+        text: h, signal: "NEUTRAL" as const, reason: "No directional signal"
+      }));
+
+  const BullIcon = () => (
+    <svg viewBox="0 0 20 20" className="w-3.5 h-3.5 fill-current" aria-label="Bull">
+      <path d="M10 2C8.5 2 7.2 2.6 6.3 3.6L4 3a1 1 0 0 0-.9 1.4l1 2.1C3.4 7.4 3 8.7 3 10c0 1 .2 2 .6 2.8L2.3 15a1 1 0 0 0 .9 1.5l2-.3c1 .5 2.1.8 3.3.8h3c1.2 0 2.3-.3 3.3-.8l2 .3a1 1 0 0 0 .9-1.5l-1.3-2.2c.4-.8.6-1.8.6-2.8 0-1.3-.4-2.6-1.1-3.5l1-2.1A1 1 0 0 0 16 3l-2.3.6C12.8 2.6 11.5 2 10 2zm0 2c.8 0 1.5.3 2 .8L10 6 8 4.8C8.5 4.3 9.2 4 10 4zm-3 5a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm4 0a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm-2 3h2c0 .6-.4 1-1 1s-1-.4-1-1z"/>
+    </svg>
+  );
+  const BearIcon = () => (
+    <svg viewBox="0 0 20 20" className="w-3.5 h-3.5 fill-current" aria-label="Bear">
+      <path d="M5 3a2 2 0 0 0-2 2c0 .7.4 1.4 1 1.7V8C4 11.9 6.7 15 10 15s6-3.1 6-7V6.7c.6-.3 1-1 1-1.7a2 2 0 0 0-2-2c-.8 0-1.5.5-1.8 1.2A7 7 0 0 0 10 4c-.8 0-1.6.1-2.2.2C7.5 3.5 6.8 3 6 3H5zm2 6a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm4 0a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm-3 3h2a1 1 0 0 1-2 0zM6 17a1 1 0 0 1 1-1h6a1 1 0 0 1 0 2H7a1 1 0 0 1-1-1z"/>
+    </svg>
+  );
 
   return (
     <Card className={alertLevel === "DANGER" ? "border-red-500/30" : alertLevel === "CAUTION" ? "border-orange-500/30" : ""}>
@@ -404,19 +422,41 @@ function SentimentPanel({ ticker }: { ticker: string }) {
             </div>
           </div>
         )}
-        {headlines.length > 0 && (
+
+        {/* Bull/Bear Headline Signal Cards */}
+        {taggedHeadlines.length > 0 ? (
           <div>
             <div className="text-xs text-muted-foreground mb-1.5 font-medium flex items-center gap-1.5">
-              <Newspaper className="w-3 h-3" />Recent Headlines
+              <Newspaper className="w-3 h-3" />Headline Signal Analysis
             </div>
             <div className="space-y-1.5">
-              {headlines.map((h: string, i: number) => (
-                <p key={i} className="text-xs text-muted-foreground leading-relaxed line-clamp-2 border-l-2 border-border pl-2">{h}</p>
-              ))}
+              {taggedHeadlines.slice(0, 5).map((h: TaggedHL, i: number) => {
+                const isBull = h.signal === "BULL";
+                const isBear = h.signal === "BEAR";
+                return (
+                  <div key={i} className={`rounded-md border p-2 ${
+                    isBull ? "bg-green-500/5 border-green-500/20" :
+                    isBear ? "bg-red-500/5 border-red-500/20" :
+                    "bg-secondary/20 border-border"
+                  }`}>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className={`text-xs font-bold flex items-center gap-1 ${
+                        isBull ? "text-green-400" : isBear ? "text-red-400" : "text-muted-foreground"
+                      }`}>
+                        {isBull ? <BullIcon /> : isBear ? <BearIcon /> : <span className="w-3 h-3 inline-block text-center">–</span>}
+                        {h.signal}
+                      </span>
+                      <span className={`text-xs truncate ${
+                        isBull ? "text-green-300/60" : isBear ? "text-red-300/60" : "text-muted-foreground/50"
+                      }`}>{h.reason}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{h.text}</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        )}
-        {headlines.length === 0 && keySignals.length === 0 && (
+        ) : (
           <p className="text-xs text-muted-foreground">No headlines found in the last 6 hours.</p>
         )}
       </CardContent>
