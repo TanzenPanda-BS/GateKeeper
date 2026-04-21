@@ -34,9 +34,10 @@ export async function checkAllStops(): Promise<StopCheckResult> {
 
   for (const pos of activeStops) {
     const bar = bars[pos.ticker];
-    if (!bar || !pos.stopLossFloor || !pos.trailPct || !pos.trailHighWaterMark) continue;
-
-    const livePrice = bar.c;           // close price from latest bar
+    if (pos.stopLossFloor == null || pos.trailPct == null || pos.trailHighWaterMark == null) continue;
+    // Use live bar price if available, fall back to last synced position price
+    const livePrice: number = bar?.c ?? pos.currentPrice;
+    if (!livePrice) { console.warn(`[TrailingStop] No price available for ${pos.ticker} — skipping`); continue; }
     const floor = pos.stopLossFloor;
     const hwm = pos.trailHighWaterMark;
     const trailPct = pos.trailPct;

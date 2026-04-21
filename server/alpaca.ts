@@ -84,10 +84,18 @@ export async function closePosition(ticker: string) {
 // ── Market data ──────────────────────────────────────────────────────────────
 const WATCHLIST = ["NVDA", "MSFT", "TSLA", "AMD", "AAPL", "META", "AMZN", "GOOGL", "SPY", "QQQ"];
 
-export async function getLatestBars(symbols: string[] = WATCHLIST) {
+export async function getLatestBars(symbols: string[] = WATCHLIST): Promise<Record<string, AlpacaBar>> {
   const syms = symbols.join(",");
-  const data: any = await alpacaGet(DATA_BASE, `/stocks/bars/latest?symbols=${syms}&feed=iex`);
-  return data.bars as Record<string, AlpacaBar>;
+  // Try IEX first (free, real-time during market hours), fall back to SIP
+  try {
+    const data: any = await alpacaGet(DATA_BASE, `/stocks/bars/latest?symbols=${syms}&feed=iex`);
+    if (data?.bars && Object.keys(data.bars).length > 0) return data.bars as Record<string, AlpacaBar>;
+  } catch {}
+  try {
+    const data: any = await alpacaGet(DATA_BASE, `/stocks/bars/latest?symbols=${syms}&feed=sip`);
+    if (data?.bars) return data.bars as Record<string, AlpacaBar>;
+  } catch {}
+  return {};
 }
 
 export async function getHistoricalBars(symbol: string, timeframe = "1Day", limit = 60) {
