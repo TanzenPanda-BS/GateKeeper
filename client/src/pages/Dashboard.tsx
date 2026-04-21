@@ -11,7 +11,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Position, Recommendation, TrustMetrics } from "@shared/schema";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 function fmt(n: number, d = 2) { return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
 
@@ -33,6 +33,40 @@ export default function Dashboard() {
     queryKey: ["/api/dismissed-alerts"],
     refetchInterval: 0,
   });
+
+  // Last scan metadata — persisted server-side so it survives page refreshes
+  const { data: lastScan } = useQuery<{ scannedAt: string | null; generated: number; stored: number }>({
+    queryKey: ["/api/signals/last-scan"],
+    refetchInterval: 0,
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/signals/last-scan");
+      return res.json();
+    },
+  });
+
+  // Cooldown: 60 min from last scan. Ticks every second.
+  const COOLDOWN_MS = 60 * 60 * 1000;
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const computeRemaining = () => {
+      if (!lastScan?.scannedAt) return 0;
+      const elapsed = Date.now() - new Date(lastScan.scannedAt).getTime();
+      return Math.max(0, COOLDOWN_MS - elapsed);
+    };
+    setCooldownRemaining(computeRemaining());
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      const r = computeRemaining();
+      setCooldownRemaining(r);
+      if (r <= 0 && cooldownRef.current) clearInterval(cooldownRef.current);
+    }, 1000);
+    return () => { if (cooldownRef.current) clearInterval(cooldownRef.current); };
+  }, [lastScan?.scannedAt]);
+
+  const cooldownMins = Math.ceil(cooldownRemaining / 60000);
+  const onCooldown = cooldownRemaining > 0;
 
   const dismissMutation = useMutation({
     mutationFn: (payload: { alertKey: string; alertLevel: string }) =>
@@ -56,12 +90,22 @@ export default function Dashboard() {
   });
 
   const generateSignals = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/signals/generate", {}),
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/signals/generate", {});
+      return res.json();
+    },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/signals/last-scan"] });
       const stored = data?.stored ?? 0;
-      if (stored > 0) toast({ title: `${stored} new signal${stored !== 1 ? "s" : ""} generated`, description: "Review them in the Decision Gate." });
-      else toast({ title: "No new signals right now", description: "Market conditions don't meet signal thresholds at this moment." });
+      const generated = data?.generated ?? 0;
+      if (stored > 0) {
+        toast({ title: `${stored} new signal${stored !== 1 ? "s" : ""} found`, description: `Scanned ${generated} candidate${generated !== 1 ? "s" : ""} — review in the Decision Gate.` });
+      } else if (generated > 0) {
+        toast({ title: "Scan complete — 0 new signals", description: `${generated} candidate${generated !== 1 ? "s" : ""} scanned, none met GateKeeper’s thresholds. Cooldown 60 min.` });
+      } else {
+        toast({ title: "Scan complete — market quiet", description: "No qualifying signals at this time. GateKeeper will auto-scan at market open and midday." });
+      }
     },
     onError: (e: any) => toast({ title: "Signal generation failed", description: e.message, variant: "destructive" }),
   });
@@ -188,10 +232,26 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className="gap-2" onClick={() => generateSignals.mutate()} disabled={generateSignals.isPending} data-testid="btn-generate-signals">
-            <RefreshCw className={`w-4 h-4 ${generateSignals.isPending ? "animate-spin" : ""}`} />
-            {generateSignals.isPending ? "Analyzing..." : "Generate Signals"}
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              variant="outline"
+              className={`gap-2 ${onCooldown ? "opacity-60" : ""}`}
+              onClick={() => { if (!onCooldown) generateSignals.mutate(); }}
+              disabled={generateSignals.isPending}
+              data-testid="btn-generate-signals"
+              title={onCooldown ? `Cooldown: ${cooldownMins} min remaining` : "Scan market for new signals"}
+            >
+              <RefreshCw className={`w-4 h-4 ${generateSignals.isPending ? "animate-spin" : ""}`} />
+              {generateSignals.isPending ? "Scanning..." : onCooldown ? `Scan (${cooldownMins}m)` : "Generate Signals"}
+            </Button>
+            {lastScan?.scannedAt && (
+              <div className="text-xs text-muted-foreground/60 text-right">
+                Last scan: {new Date(lastScan.scannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                {lastScan.generated > 0 && ` · ${lastScan.generated} scanned`}
+                {lastScan.stored > 0 && ` · ${lastScan.stored} found`}
+              </div>
+            )}
+          </div>
           <Link href="/gate">
             <Button className="gap-2" data-testid="btn-goto-gate">
               <ShieldCheck className="w-4 h-4" />

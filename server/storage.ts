@@ -133,6 +133,11 @@ sqlite.exec(`
     snapshot_hour INTEGER NOT NULL,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS app_kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 `);
 
 // Live migrations — add new columns to existing tables if they don't exist
@@ -233,6 +238,9 @@ export interface IStorage {
   updateHighWaterMark(ticker: string, newPrice: number, newFloor: number): void;
   clearStop(ticker: string): void;
   getActiveStops(): Position[];
+  // Key-value metadata store
+  setMeta(key: string, value: string): void;
+  getMeta(key: string): string | null;
 }
 
 export class Storage implements IStorage {
@@ -576,6 +584,17 @@ export class Storage implements IStorage {
       stopLossFloor: r.stop_loss_floor, trailPct: r.trail_pct,
       trailHighWaterMark: r.trail_high_water_mark, stopActive: r.stop_active,
     })) as Position[];
+  }
+
+  setMeta(key: string, value: string): void {
+    sqlite.prepare(`INSERT INTO app_kv (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run(key, value, new Date().toISOString());
+  }
+
+  getMeta(key: string): string | null {
+    const row = sqlite.prepare("SELECT value FROM app_kv WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value ?? null;
   }
 }
 

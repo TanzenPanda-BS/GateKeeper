@@ -232,7 +232,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         created.push(rec);
       }
 
-      res.json({ generated: signals.length, stored: created.length, signals: created });
+      const result = { generated: signals.length, stored: created.length, signals: created, scannedAt: new Date().toISOString() };
+      // Persist last scan metadata so the UI can show cooldown across page refreshes
+      storage.setMeta("last_scan", JSON.stringify({ scannedAt: result.scannedAt, generated: signals.length, stored: created.length }));
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // GET /api/signals/last-scan — returns metadata from the most recent scan
+  app.get("/api/signals/last-scan", (_req, res) => {
+    try {
+      const raw = storage.getMeta("last_scan");
+      if (!raw) return res.json({ scannedAt: null, generated: 0, stored: 0 });
+      res.json(JSON.parse(raw));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
