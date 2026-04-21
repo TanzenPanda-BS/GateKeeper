@@ -76,15 +76,20 @@ function StopRow({ pos, onEdit, onCancel }: {
 }
 
 // ── Set / Edit Stop Inline Panel ─────────────────────────────────────────────
-function StopEditor({ pos, onClose }: {
+function StopEditor({ pos, onClose, isShort = false }: {
   pos: Position;
   onClose: () => void;
+  isShort?: boolean;
 }) {
   const [floorPct, setFloorPct] = useState("10");
   const [trailPct, setTrailPct] = useState("5");
   const { toast } = useToast();
 
-  const floorPrice = pos.currentPrice * (1 - parseFloat(floorPct || "10") / 100);
+  // Longs: floor is BELOW current (stop out if price drops)
+  // Shorts: ceiling is ABOVE current (stop out if price rises against you)
+  const floorPrice = isShort
+    ? pos.currentPrice * (1 + parseFloat(floorPct || "10") / 100)
+    : pos.currentPrice * (1 - parseFloat(floorPct || "10") / 100);
 
   const setStopMut = useMutation({
     mutationFn: ({ floor, trailPct }: { floor: number; trailPct: number }) =>
@@ -102,10 +107,19 @@ function StopEditor({ pos, onClose }: {
 
   return (
     <div className="mt-2 p-3 rounded-lg border border-primary/20 bg-primary/5 space-y-3">
-      <div className="text-xs font-medium text-primary">Set Trailing Stop</div>
+      <div className="text-xs font-medium text-primary">
+        {isShort ? "Set Trailing Stop (Short)" : "Set Trailing Stop"}
+      </div>
+      {isShort && (
+        <div className="text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/15 rounded p-2">
+          Short stop: if price rises above the ceiling, GateKeeper alerts you to cover.
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Floor % below current</label>
+          <label className="text-xs text-muted-foreground mb-1 block">
+            {isShort ? "Ceiling % above current" : "Floor % below current"}
+          </label>
           <Input
             data-testid={`input-floor-pct-${pos.ticker}`}
             type="number" min="1" max="50" step="0.5"
@@ -113,10 +127,14 @@ function StopEditor({ pos, onClose }: {
             onChange={e => setFloorPct(e.target.value)}
             className="h-8 text-xs mono"
           />
-          <div className="text-xs text-muted-foreground mt-0.5">Floor: <span className="text-red-400 mono">${floorPrice.toFixed(2)}</span></div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {isShort ? "Ceiling" : "Floor"}: <span className="text-red-400 mono">${floorPrice.toFixed(2)}</span>
+          </div>
         </div>
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Trail % (auto-raise)</label>
+          <label className="text-xs text-muted-foreground mb-1 block">
+            {isShort ? "Trail % (auto-lower)" : "Trail % (auto-raise)"}
+          </label>
           <Input
             data-testid={`input-trail-pct-${pos.ticker}`}
             type="number" min="0.5" max="20" step="0.5"
@@ -135,7 +153,10 @@ function StopEditor({ pos, onClose }: {
             const f = parseFloat(floorPct);
             const t = parseFloat(trailPct);
             if (!isNaN(f) && !isNaN(t) && f > 0 && t > 0) {
-              setStopMut.mutate({ floor: pos.currentPrice * (1 - f / 100), trailPct: t });
+              const computedFloor = isShort
+                ? pos.currentPrice * (1 + f / 100)
+                : pos.currentPrice * (1 - f / 100);
+              setStopMut.mutate({ floor: computedFloor, trailPct: t });
             }
           }}
         >
@@ -177,7 +198,7 @@ function PositionTable({ positions, isLoading, isShort = false }: {
 
   return (
     <div className="space-y-0">
-      <div className={`grid text-xs text-muted-foreground pb-2 border-b border-border px-1 ${isShort ? "grid-cols-7" : "grid-cols-8"}`}>
+      <div className="grid grid-cols-8 text-xs text-muted-foreground pb-2 border-b border-border px-1">
         <span>Ticker</span>
         <span className="text-right">Shares</span>
         <span className="text-right">Avg Cost</span>
@@ -185,17 +206,20 @@ function PositionTable({ positions, isLoading, isShort = false }: {
         <span className="text-right">Exposure</span>
         <span className="text-right">P&L</span>
         <span className="text-right">Type</span>
-        {!isShort && <span className="text-right">Stop</span>}
+        <span className="text-right">Stop</span>
       </div>
       {isLoading && <div className="py-8 text-center text-muted-foreground text-sm">Loading...</div>}
       {positions.map(p => {
         const hasStop = p.stopActive === 1;
-        const isBreached = hasStop && p.stopLossFloor != null && p.currentPrice <= p.stopLossFloor;
+        // For longs: breach if price drops below floor. For shorts: breach if price rises above floor.
+        const isBreached = hasStop && p.stopLossFloor != null && (
+          isShort ? p.currentPrice >= p.stopLossFloor : p.currentPrice <= p.stopLossFloor
+        );
         return (
           <div key={p.ticker} className="border-b border-border/50">
             <div
               data-testid={`row-position-${p.ticker}`}
-              className={`grid text-sm py-3 px-1 hover:bg-secondary/30 transition-colors ${isShort ? "grid-cols-7" : "grid-cols-8"} ${isBreached ? "bg-red-500/5" : ""}`}
+              className={`grid grid-cols-8 text-sm py-3 px-1 hover:bg-secondary/30 transition-colors ${isBreached ? "bg-red-500/5" : ""}`}
             >
               <div className="flex items-center gap-2">
                 <span className="mono font-semibold">{p.ticker}</span>
@@ -216,9 +240,7 @@ function PositionTable({ positions, isLoading, isShort = false }: {
                 </div>
               </div>
               <div className="text-right">
-                {isShort ? (
-                  <Badge variant="outline" className="text-xs border-yellow-500/30 text-yellow-400">Short</Badge>
-                ) : isBreached ? (
+                {isBreached ? (
                   <Button
                     size="sm"
                     variant="outline"
@@ -229,36 +251,36 @@ function PositionTable({ positions, isLoading, isShort = false }: {
                   >
                     Exit Now
                   </Button>
+                ) : isShort ? (
+                  <Badge variant="outline" className="text-xs border-yellow-500/30 text-yellow-400">Short</Badge>
                 ) : p.isAutoManaged === 1 ? (
                   <Badge variant="outline" className="text-xs border-yellow-500/30 text-yellow-400">Auto</Badge>
                 ) : (
                   <Badge variant="outline" className="text-xs text-muted-foreground">Long</Badge>
                 )}
               </div>
-              {!isShort && (
-                <div className="text-right flex items-center justify-end">
-                  {hasStop ? (
-                    <button
-                      onClick={() => setEditStop(editStop === p.ticker ? null : p.ticker)}
-                      className="text-xs text-primary/70 hover:text-primary transition-colors font-medium"
-                      data-testid={`btn-manage-stop-${p.ticker}`}
-                    >
-                      Manage
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setEditStop(editStop === p.ticker ? null : p.ticker)}
-                      className="text-xs text-muted-foreground hover:text-primary transition-colors"
-                      data-testid={`btn-add-stop-${p.ticker}`}
-                    >
-                      + Stop
-                    </button>
-                  )}
-                </div>
-              )}
+              <div className="text-right flex items-center justify-end">
+                {hasStop ? (
+                  <button
+                    onClick={() => setEditStop(editStop === p.ticker ? null : p.ticker)}
+                    className="text-xs text-primary/70 hover:text-primary transition-colors font-medium"
+                    data-testid={`btn-manage-stop-${p.ticker}`}
+                  >
+                    Manage
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setEditStop(editStop === p.ticker ? null : p.ticker)}
+                    className="text-xs text-muted-foreground hover:text-primary transition-colors"
+                    data-testid={`btn-add-stop-${p.ticker}`}
+                  >
+                    + Stop
+                  </button>
+                )}
+              </div>
             </div>
-            {/* Expanded stop row / editor */}
-            {!isShort && hasStop && editStop !== p.ticker && (
+            {/* Expanded stop row / editor — available for all positions */}
+            {hasStop && editStop !== p.ticker && (
               <div className="px-1 pb-2">
                 <StopRow
                   pos={p}
@@ -267,9 +289,9 @@ function PositionTable({ positions, isLoading, isShort = false }: {
                 />
               </div>
             )}
-            {!isShort && editStop === p.ticker && (
+            {editStop === p.ticker && (
               <div className="px-1 pb-2">
-                <StopEditor pos={p} onClose={() => setEditStop(null)} />
+                <StopEditor pos={p} onClose={() => setEditStop(null)} isShort={isShort} />
               </div>
             )}
           </div>
