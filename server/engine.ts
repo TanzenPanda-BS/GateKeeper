@@ -498,8 +498,65 @@ export async function runEODPipeline(): Promise<{ resolved: number; errors: stri
     console.log("[EOD] Weekly AAR generated");
   }
 
+  // 6. Anomaly RECALIBRATE check (7-day rolling win rate)
+  const recalResult = await checkAnomalyRecalibrate();
+  if (recalResult.triggered) {
+    console.warn(`[EOD] ⚠️ RECALIBRATE triggered: ${recalResult.reason}`);
+  } else {
+    console.log(`[EOD] RECALIBRATE check: ${recalResult.reason}`);
+  }
+
   console.log("[EOD] Pipeline complete");
   return { resolved, errors };
+}
+
+// ── Anomaly RECALIBRATE check ─────────────────────────────────────────────────────
+// Called at the end of EOD pipeline. If AI win rate over the last 7 days falls
+// below 35%, write a RECALIBRATE flag to the trust_metrics record so the
+// frontend can surface a warning banner. Resets automatically if win rate recovers.
+export async function checkAnomalyRecalibrate(): Promise<{ triggered: boolean; reason: string }> {
+  try {
+    // Gather all resolved recommendations from the last 7 calendar days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString();
+
+    const all = storage.getRecommendations(500);
+    const recent = all.filter(r =>
+      r.resolvedAt && r.resolvedAt >= cutoff && r.aiWasCorrect !== null
+    );
+
+    if (recent.length < 5) {
+      // Not enough data to make a determination
+      return { triggered: false, reason: "Insufficient data (< 5 resolved trades in 7 days)" };
+    }
+
+    const aiCorrect = recent.filter(r => r.aiWasCorrect === 1).length;
+    const aiWinRate7d = (aiCorrect / recent.length) * 100;
+
+    console.log(`[RECALIBRATE] 7d win rate: ${aiWinRate7d.toFixed(1)}% (${aiCorrect}/${recent.length} trades)`);
+
+    if (aiWinRate7d < 35) {
+      // Trigger: AI is performing poorly — write RECALIBRATE flag
+      const trust = storage.getTrustMetrics();
+      if (trust) {
+        const recommendation = `⚠️ RECALIBRATE: GateKeeper AI 7-day win rate has dropped to ${aiWinRate7d.toFixed(0)}%. ` +
+          `This is below the 35% anomaly threshold. Consider reducing position sizes and waiting for ` +
+          `signal conditions to improve before approving new trades.`;
+        storage.upsertTrustMetrics({
+          ...trust,
+          subscriptionRecommendation: recommendation,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      return { triggered: true, reason: `7d win rate ${aiWinRate7d.toFixed(0)}% < 35% threshold` };
+    }
+
+    return { triggered: false, reason: `7d win rate ${aiWinRate7d.toFixed(0)}% is within normal range` };
+  } catch (e: any) {
+    console.error("[RECALIBRATE] Error:", e.message);
+    return { triggered: false, reason: "Error during check" };
+  }
 }
 
 // ── Import type ───────────────────────────────────────────────────────────────

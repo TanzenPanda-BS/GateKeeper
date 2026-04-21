@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, ShieldCheck, BriefcaseBusiness, FileText, TrendingUp, Zap, ChevronRight, Activity } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, BriefcaseBusiness, FileText, TrendingUp, Zap, ChevronRight, Activity, Ghost, Award, AlertCircle } from "lucide-react";
 import type { Recommendation } from "@shared/schema";
 
 export default function Sidebar() {
@@ -23,6 +23,8 @@ export default function Sidebar() {
     { href: "/trust", label: "Trust & ROI", icon: TrendingUp },
     { href: "/rules", label: "Exception Rules", icon: Zap },
     { href: "/sentiment", label: "Sentiment", icon: Activity, badge: dangerCount > 0 ? String(dangerCount) : undefined },
+    { href: "/shadow", label: "Shadow Portfolio", icon: Ghost },
+    { href: "/scorecard", label: "Scorecard", icon: Award },
   ];
 
   return (
@@ -70,12 +72,18 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Onboarding link */}
-      <div className="px-3 pb-2">
+      {/* Secondary links */}
+      <div className="px-3 pb-2 space-y-0.5">
         <Link href="/onboarding">
           <a className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
             <ShieldCheck className="w-3.5 h-3.5" />
             Setup Guide
+          </a>
+        </Link>
+        <Link href="/disclaimer">
+          <a className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+            <AlertCircle className="w-3.5 h-3.5" />
+            Legal Disclaimer
           </a>
         </Link>
       </div>

@@ -6,7 +6,7 @@ import {
   generateSignals, placeOrder, getOrders, closePosition
 } from "./alpaca";
 import {
-  runEODPipeline, recalculateTrustScore, generateDailyAAR
+  runEODPipeline, recalculateTrustScore, generateDailyAAR, checkAnomalyRecalibrate
 } from "./engine";
 import { detectEarningsProximity } from "./earnings";
 import { analyzeSentiment, evaluateSafetyNet } from "./sentiment";
@@ -52,12 +52,18 @@ async function initBetaSession() {
 }
 
 // ── Position sync from Alpaca ─────────────────────────────────────────────────
+// IMPORTANT: We do NOT call clearPositions() here. Instead we upsert each live
+// position while preserving trailing stop columns (stopLossFloor, trailPct,
+// trailHighWaterMark, stopActive). Positions that disappear from Alpaca are
+// deleted individually so we never wipe stop data on every 60-second poll.
 async function syncPositions() {
   try {
     const live = await getPositions();
-    storage.clearPositions();
+    const liveTickers = new Set(live.map(p => p.symbol));
+
+    // Upsert each live position — preserve stop columns on existing rows
     for (const p of live) {
-      storage.upsertPosition({
+      storage.upsertPositionPreserveStop({
         ticker: p.symbol,
         shares: parseFloat(p.qty),
         avgCost: parseFloat(p.avg_entry_price),
@@ -69,6 +75,15 @@ async function syncPositions() {
         updatedAt: new Date().toISOString(),
       });
     }
+
+    // Remove positions that are no longer open at Alpaca
+    const stored = storage.getPositions();
+    for (const sp of stored) {
+      if (!liveTickers.has(sp.ticker)) {
+        storage.deletePosition(sp.ticker);
+      }
+    }
+
     return live.length;
   } catch { return 0; }
 }
@@ -278,6 +293,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       await recalculateTrustScore();
       res.json({ ok: true, trust: storage.getTrustMetrics() });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/engine/recalibrate — manually run the anomaly check
+  app.post("/api/engine/recalibrate", async (_req, res) => {
+    try {
+      const result = await checkAnomalyRecalibrate();
+      res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -531,6 +554,113 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const result = await checkAllStops();
       res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Shadow Portfolio ─────────────────────────────────────────────────────
+  // GET /api/shadow — all rejected/expired recs with phantom P&L data
+  app.get("/api/shadow", (_req, res) => {
+    try {
+      const all = storage.getRecommendations(200);
+      // Shadow = rejected, expired, or decided but tracking phantom P&L
+      const shadow = all.filter(r =>
+        r.status === "REJECTED" ||
+        r.status === "EXPIRED" ||
+        (r.userDecision === "REJECTED" && r.phantomPnl !== null)
+      );
+
+      const resolved = shadow.filter(r => r.resolvedAt !== null);
+      const totalPhantomPnl = resolved.reduce((sum, r) => sum + (r.phantomPnl ?? 0), 0);
+      const aiWins = resolved.filter(r => r.aiWasCorrect === 1).length;
+      const aiLosses = resolved.filter(r => r.aiWasCorrect === 0).length;
+      const aiAccuracy = (aiWins + aiLosses) > 0 ? (aiWins / (aiWins + aiLosses)) * 100 : 0;
+
+      res.json({
+        entries: shadow,
+        totalPhantomPnl,
+        totalEntries: shadow.length,
+        aiWins,
+        aiLosses,
+        aiAccuracy,
+        pendingCount: shadow.filter(r => !r.resolvedAt).length,
+      });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Scorecard ─────────────────────────────────────────────────────────────
+  // GET /api/scorecard — Growth Score composite
+  app.get("/api/scorecard", (_req, res) => {
+    try {
+      const trust = storage.getTrustMetrics();
+      const session = storage.getBetaSession();
+      if (!trust || (trust.totalDecisions ?? 0) < 1) {
+        return res.status(204).json(null);
+      }
+
+      const daysActive = session
+        ? Math.max(1, Math.floor((Date.now() - new Date(session.startDate).getTime()) / 86400000) + 1)
+        : 1;
+
+      const aiWinRate = trust.aiWinRate ?? 0;
+      const userWinRate = trust.userWinRate ?? 0;
+      const approvalRate = trust.approvalRate ?? 0;
+      const totalDecisions = trust.totalDecisions ?? 0;
+      const roiDelta = trust.roiDelta ?? 0;
+
+      // ── Decision Quality (40 pts) ──────────────────────────────────────────
+      // Win rate score (0–16): scales from 0% win rate → 0 pts, 60%+ → 16 pts
+      const winRateScore = Math.min(16, (userWinRate / 60) * 16);
+      // Risk/reward score (0–14): positive ROI delta rewards good sizing
+      const riskRewardScore = roiDelta >= 0
+        ? Math.min(14, 7 + (roiDelta / 5) * 7)   // above S&P: 7–14
+        : Math.max(0, 7 + (roiDelta / 10) * 7);  // below S&P: 0–7
+      // Consistency (0–10): based on total decisions made (more data = more confidence)
+      const consistencyScore = Math.min(10, (totalDecisions / 30) * 10);
+      const decisionQuality = winRateScore + riskRewardScore + consistencyScore;
+
+      // ── Learning Velocity (30 pts) ─────────────────────────────────────────
+      // Improvement (0–12): week-over-week win rate trend (use roiDelta as proxy until more history)
+      const improvementScore = Math.min(12, Math.max(0, 6 + roiDelta * 1.2));
+      // Adaptation (0–10): how much approval rate deviates from extremes (50–60% is ideal)
+      const adaptPct = Math.abs(approvalRate - 55);
+      const adaptationScore = Math.max(0, 10 - (adaptPct / 5.5) * 10);
+      // Streak (0–8): trust score as proxy for consistent correct calls
+      const streakScore = Math.min(8, (trust.trustScore / 100) * 8);
+      const learningVelocity = improvementScore + adaptationScore + streakScore;
+
+      // ── AI Alignment (30 pts) ──────────────────────────────────────────────
+      // Approval alignment (0–12): aligning with GK when GK is right
+      const approvalAlignmentScore = Math.min(12, (approvalRate / 100) * 12);
+      // Outcome alignment (0–10): user win rate vs AI win rate convergence
+      const diffPct = Math.abs(userWinRate - aiWinRate);
+      const outcomeAlignmentScore = Math.max(0, 10 - (diffPct / 10) * 10);
+      // Calibration (0–8): based on trust score movement direction
+      const calibrationScore = Math.min(8, (trust.trustScore / 100) * 8);
+      const aiAlignment = approvalAlignmentScore + outcomeAlignmentScore + calibrationScore;
+
+      const growthScore = Math.min(100, decisionQuality + learningVelocity + aiAlignment);
+
+      const grade = growthScore >= 93 ? "A+" : growthScore >= 83 ? "A" :
+        growthScore >= 73 ? "B+" : growthScore >= 63 ? "B" :
+        growthScore >= 53 ? "C+" : growthScore >= 43 ? "C" :
+        growthScore >= 33 ? "D" : "F";
+
+      const gradeLabel = grade.startsWith("A") ? "Excellent — GateKeeper AI alignment is strong" :
+        grade.startsWith("B") ? "Good — above average decision quality" :
+        grade.startsWith("C") ? "Developing — early stage, improving" :
+        "Needs work — focus on following higher-confidence signals";
+
+      res.json({
+        growthScore, decisionQuality, learningVelocity, aiAlignment,
+        grade, gradeLabel, totalDecisions, approvalRate,
+        aiWinRate, userWinRate, roiDelta,
+        trustScore: trust.trustScore,
+        subscriptionVerdict: trust.subscriptionVerdict,
+        daysActive,
+        decisionQualityBreakdown: { winRateScore, riskRewardScore, consistencyScore },
+        learningVelocityBreakdown: { improvementScore, adaptationScore, streakScore },
+        aiAlignmentBreakdown: { approvalAlignmentScore, outcomeAlignmentScore, calibrationScore },
+      });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

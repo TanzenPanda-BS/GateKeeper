@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import {
   ShieldCheck, CheckCircle, XCircle, Edit3, Clock,
   TrendingUp, TrendingDown, Target, Zap, CalendarClock,
   BarChart2, Timer, Newspaper, AlertTriangle, Activity,
-  RefreshCw, ShieldAlert,
+  RefreshCw, ShieldAlert, HelpCircle, ChevronDown, ChevronUp,
+  Calculator,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,12 @@ import type { Recommendation } from "@shared/schema";
 
 function fmt(n: number, d = 2) { return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
 
+// ── Confidence label → numeric % mapping ────────────────────────────────────
+const confidencePct: Record<string, number> = { HIGH: 82, MEDIUM: 61, LOW: 38, SPECULATIVE: 24 };
+const confidenceClass: Record<string, string> = {
+  HIGH: "badge-high", MEDIUM: "badge-medium", LOW: "badge-speculative", SPECULATIVE: "badge-speculative",
+};
+
 // Trade style config
 const tradeStyleConfig: Record<string, { label: string; color: string; bg: string; desc: string; icon: any }> = {
   DAY:      { label: "Day Trade",       color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20", desc: "Execute and close within 1–3 sessions", icon: Timer },
@@ -24,6 +31,57 @@ const tradeStyleConfig: Record<string, { label: string; color: string; bg: strin
   POSITION: { label: "Position Trade",  color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20", desc: "Hold 10–30 days — trend continuation play", icon: BarChart2 },
 };
 
+// ── Live countdown hook ───────────────────────────────────────────────────────
+function useCountdown(expiresAt: string) {
+  const getRemaining = () => Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+  const [secs, setSecs] = useState(getRemaining);
+  useEffect(() => {
+    setSecs(getRemaining());
+    const t = setInterval(() => setSecs(getRemaining()), 1000);
+    return () => clearInterval(t);
+  }, [expiresAt]);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const label = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${String(s).padStart(2,"0")}s` : `${s}s`;
+  const isUrgent = secs < 1800; // < 30 min
+  return { label, isUrgent, secs };
+}
+
+// ── ELI5 generator ───────────────────────────────────────────────────────────
+function generateELI5(rec: Recommendation): string {
+  const action = rec.action === "BUY" ? "buy" : "sell";
+  const conf = (rec.confidence ?? "MEDIUM").toLowerCase();
+  const style = rec.tradeStyle ?? "SWING";
+  const upPct = rec.upsidePercent ?? 0;
+  const downPct = rec.downsidePercent ?? 0;
+  const horizon = rec.timeHorizon ?? "1–2 weeks";
+  const catalysts: string[] = (() => { try { return JSON.parse(rec.catalysts || "[]"); } catch { return []; } })();
+  const topCatalyst = catalysts[0] ?? "multiple technical signals aligning";
+
+  const styleDesc: Record<string, string> = {
+    DAY: "ideally within today's session",
+    SWING: `over the next ${horizon}`,
+    POSITION: `over the coming ${horizon}`,
+  };
+
+  const confDesc: Record<string, string> = {
+    high: "GateKeeper AI is highly confident — multiple indicators are all pointing the same direction.",
+    medium: "GateKeeper AI sees a reasonable setup — conditions are favorable but not perfect.",
+    low: "GateKeeper AI sees a potential opportunity but conditions are mixed — size conservatively.",
+    speculative: "This is a speculative call. The setup has merit but carries elevated risk.",
+  };
+
+  return [
+    `GateKeeper AI recommends you ${action} ${rec.shares} shares of ${rec.ticker} ${styleDesc[style]}.`,
+    `The main reason: ${topCatalyst}.`,
+    `If correct, you could gain up to ${upPct.toFixed(1)}% ($${fmt(rec.shares * rec.priceAtRecommendation * upPct / 100, 0)}).`,
+    `If it goes wrong, the stop loss limits your loss to roughly ${downPct.toFixed(1)}% ($${fmt(rec.shares * rec.priceAtRecommendation * downPct / 100, 0)}).`,
+    confDesc[conf] ?? confDesc.medium,
+  ].join(" ");
+}
+
+// ── Signal Strength Bar ───────────────────────────────────────────────────────
 function SignalStrengthBar({ strength, tradeStyle }: { strength: number; tradeStyle: string | null }) {
   const config = tradeStyle ? tradeStyleConfig[tradeStyle] : tradeStyleConfig.SWING;
   const color = strength >= 70 ? "bg-green-500" : strength >= 40 ? "bg-yellow-500" : "bg-orange-500";
@@ -44,6 +102,7 @@ function SignalStrengthBar({ strength, tradeStyle }: { strength: number; tradeSt
   );
 }
 
+// ── Hold Window Panel ─────────────────────────────────────────────────────────
 function HoldWindowPanel({ rec }: { rec: Recommendation }) {
   const config = rec.tradeStyle ? tradeStyleConfig[rec.tradeStyle] : tradeStyleConfig.SWING;
   const Icon = config.icon;
@@ -79,11 +138,151 @@ function HoldWindowPanel({ rec }: { rec: Recommendation }) {
   );
 }
 
-// ── Sentiment panel for the side rail ────────────────────────────────────────
+// ── ELI5 Panel ───────────────────────────────────────────────────────────────
+function ELI5Panel({ rec }: { rec: Recommendation }) {
+  const [open, setOpen] = useState(false);
+  const explanation = generateELI5(rec);
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        data-testid="btn-eli5-toggle"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+      >
+        <span className="flex items-center gap-1.5">
+          <HelpCircle className="w-3.5 h-3.5 text-primary" />
+          Explain this in plain English
+        </span>
+        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-0 bg-primary/5 border-t border-border">
+          <p className="text-xs text-foreground leading-relaxed pt-2">{explanation}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── What-If Scenario Panel ────────────────────────────────────────────────────
+function WhatIfPanel({ rec }: { rec: Recommendation }) {
+  const [shares, setShares] = useState(String(rec.shares));
+  const [scenario, setScenario] = useState<"target" | "stop" | "custom">("target");
+  const [customPct, setCustomPct] = useState("5");
+  const [open, setOpen] = useState(false);
+
+  const entryPrice = rec.priceAtRecommendation;
+  const numShares = parseFloat(shares) || rec.shares;
+  const positionValue = numShares * entryPrice;
+
+  const scenarioPct =
+    scenario === "target" ? rec.upsidePercent :
+    scenario === "stop"   ? -rec.downsidePercent :
+    parseFloat(customPct) || 0;
+
+  const pnl = positionValue * (scenarioPct / 100);
+  const exitPrice = entryPrice * (1 + scenarioPct / 100);
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        data-testid="btn-whatif-toggle"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+      >
+        <span className="flex items-center gap-1.5">
+          <Calculator className="w-3.5 h-3.5 text-primary" />
+          What-If Scenario Calculator
+        </span>
+        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-2 border-t border-border bg-secondary/20 space-y-3">
+          {/* Share count override */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-16 flex-shrink-0">Shares</span>
+            <Input
+              data-testid="input-whatif-shares"
+              type="number"
+              min="1"
+              value={shares}
+              onChange={e => setShares(e.target.value)}
+              className="h-7 text-xs mono w-24"
+            />
+            <span className="text-xs text-muted-foreground">× ${fmt(entryPrice)} = <span className="text-foreground mono">${fmt(numShares * entryPrice, 0)}</span></span>
+          </div>
+
+          {/* Scenario selector */}
+          <div className="flex gap-1.5">
+            {([
+              ["target", `Hit Target (+${fmt(rec.upsidePercent, 1)}%)`, "text-green-400 border-green-500/40 bg-green-500/10"],
+              ["stop",   `Stop Loss (-${fmt(rec.downsidePercent, 1)}%)`, "text-red-400 border-red-500/40 bg-red-500/10"],
+              ["custom", "Custom %", "text-muted-foreground border-border bg-secondary"],
+            ] as const).map(([key, label, cls]) => (
+              <button
+                key={key}
+                data-testid={`btn-scenario-${key}`}
+                onClick={() => setScenario(key)}
+                className={`flex-1 text-xs py-1.5 px-2 rounded border font-medium transition-colors ${scenario === key ? cls : "border-border text-muted-foreground bg-transparent hover:bg-secondary"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {scenario === "custom" && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Move %</span>
+              <Input
+                data-testid="input-whatif-custompct"
+                type="number"
+                value={customPct}
+                onChange={e => setCustomPct(e.target.value)}
+                className="h-7 text-xs mono w-20"
+                placeholder="e.g. 3.5"
+              />
+              <span className="text-xs text-muted-foreground">(negative = loss)</span>
+            </div>
+          )}
+
+          {/* Result */}
+          <div className="flex items-center justify-between p-2.5 rounded-lg bg-background border border-border">
+            <div>
+              <div className="text-xs text-muted-foreground">Exit price</div>
+              <div className="text-sm font-semibold mono">${fmt(exitPrice)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-muted-foreground">P&L ({scenarioPct >= 0 ? "+" : ""}{fmt(scenarioPct, 1)}%)</div>
+              <div className={`text-sm font-bold mono ${pnl >= 0 ? "gain" : "loss"}`}>
+                {pnl >= 0 ? "+" : ""}${fmt(Math.abs(pnl), 0)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Expiration Countdown ──────────────────────────────────────────────────────
+function ExpirationCountdown({ expiresAt }: { expiresAt: string }) {
+  const { label, isUrgent } = useCountdown(expiresAt);
+  return (
+    <div
+      data-testid="signal-expiry-countdown"
+      className={`flex items-center gap-1.5 text-xs flex-shrink-0 ${isUrgent ? "text-red-400 animate-pulse" : "text-muted-foreground"}`}
+    >
+      <Clock className="w-3.5 h-3.5" />
+      <span>{label} to expire</span>
+    </div>
+  );
+}
+
+// ── Sentiment Panel ───────────────────────────────────────────────────────────
 function SentimentPanel({ ticker }: { ticker: string }) {
-  const { data: allSentiment = [], isLoading, refetch, isFetching } = useQuery<any[]>({
+  const { data: allSentiment = [], isLoading, isFetching } = useQuery<any[]>({
     queryKey: ["/api/sentiment"],
-    refetchInterval: 300000, // 5 min passive refresh
+    refetchInterval: 300000,
   });
   const { toast } = useToast();
 
@@ -108,82 +307,61 @@ function SentimentPanel({ ticker }: { ticker: string }) {
     score > 0.15 ? "text-green-400" : score < -0.15 ? "text-red-400" : "text-yellow-400";
 
   const scoreBar = (score: number) => {
-    // Map -1..+1 to 0..100%
     const pct = Math.round((score + 1) / 2 * 100);
     const color = score > 0.15 ? "bg-green-500" : score < -0.15 ? "bg-red-500" : "bg-yellow-500";
     return { pct, color };
   };
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Activity className="w-4 h-4 text-primary" />
-            Sentiment — {ticker}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-xs text-muted-foreground py-4 text-center">Loading...</CardContent>
-      </Card>
-    );
-  }
+  if (isLoading) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />Sentiment — {ticker}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="text-xs text-muted-foreground py-4 text-center">Loading...</CardContent>
+    </Card>
+  );
 
-  if (!sentiment) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Activity className="w-4 h-4 text-primary" />
-            Sentiment — {ticker}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">No sentiment data yet. Refresh to fetch the latest news.</p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full gap-2 text-xs"
-            onClick={() => refreshMutation.mutate()}
-            disabled={refreshMutation.isPending}
-            data-testid="btn-refresh-sentiment"
-          >
-            <RefreshCw className={`w-3 h-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
-            Fetch Sentiment
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
+  if (!sentiment) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />Sentiment — {ticker}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">No sentiment data yet.</p>
+        <Button size="sm" variant="outline" className="w-full gap-2 text-xs"
+          onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending}
+          data-testid="btn-refresh-sentiment">
+          <RefreshCw className={`w-3 h-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
+          Fetch Sentiment
+        </Button>
+      </CardContent>
+    </Card>
+  );
 
   const { pct, color: barColor } = scoreBar(sentiment.score);
   const alertLevel = sentiment.alertLevel ?? "NONE";
   const headlines: string[] = Array.isArray(sentiment.headlines) ? sentiment.headlines : [];
   const keySignals: string[] = Array.isArray(sentiment.keySignals) ? sentiment.keySignals : [];
-
-  const updatedAgo = sentiment.updatedAt
-    ? Math.floor((Date.now() - new Date(sentiment.updatedAt).getTime()) / 60000)
-    : null;
+  const updatedAgo = sentiment.updatedAt ? Math.floor((Date.now() - new Date(sentiment.updatedAt).getTime()) / 60000) : null;
 
   return (
     <Card className={alertLevel === "DANGER" ? "border-red-500/30" : alertLevel === "CAUTION" ? "border-orange-500/30" : ""}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-primary" />
-            Sentiment — {ticker}
+            <Activity className="w-4 h-4 text-primary" />Sentiment — {ticker}
           </span>
-          <button
-            onClick={() => refreshMutation.mutate()}
-            disabled={refreshMutation.isPending || isFetching}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            data-testid="btn-refresh-sentiment"
-          >
+          <button onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending || isFetching}
+            className="text-muted-foreground hover:text-foreground transition-colors" data-testid="btn-refresh-sentiment">
             <RefreshCw className={`w-3 h-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
           </button>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Score bar */}
         <div>
           <div className="flex items-center justify-between text-xs mb-1.5">
             <span className="text-muted-foreground">News Sentiment Score</span>
@@ -192,12 +370,9 @@ function SentimentPanel({ ticker }: { ticker: string }) {
             </span>
           </div>
           <div className="relative h-2 bg-secondary rounded-full overflow-hidden">
-            {/* Center tick */}
             <div className="absolute left-1/2 top-0 bottom-0 w-px bg-border z-10" />
-            <div
-              className={`absolute top-0 h-full rounded-full transition-all ${barColor}`}
-              style={{ left: sentiment.score < 0 ? `${pct}%` : "50%", width: `${Math.abs(pct - 50)}%` }}
-            />
+            <div className={`absolute top-0 h-full rounded-full transition-all ${barColor}`}
+              style={{ left: sentiment.score < 0 ? `${pct}%` : "50%", width: `${Math.abs(pct - 50)}%` }} />
           </div>
           <div className="flex justify-between text-xs mt-0.5 text-muted-foreground/60">
             <span>Bearish</span>
@@ -206,46 +381,33 @@ function SentimentPanel({ ticker }: { ticker: string }) {
           </div>
         </div>
 
-        {/* Alert badge */}
         {alertLevel !== "NONE" && (
           <div className={`p-2.5 rounded-lg border text-xs leading-relaxed ${alertColors[alertLevel]}`}>
             <div className="flex items-center gap-1.5 font-semibold mb-0.5">
-              <AlertTriangle className="w-3 h-3" />
-              {alertLevel} ALERT
+              <AlertTriangle className="w-3 h-3" />{alertLevel} ALERT
             </div>
             <p>{sentiment.alertReason}</p>
           </div>
         )}
-
         {alertLevel === "NONE" && (
           <div className="p-2.5 rounded-lg border bg-green-500/5 border-green-500/15 text-xs text-green-400">
             Sentiment consistent with trade thesis. No contrary news signals detected.
           </div>
         )}
-
-        {/* Key signals */}
         {keySignals.length > 0 && (
           <div>
             <div className="text-xs text-muted-foreground mb-1.5 font-medium">Detected Signals</div>
             <div className="flex flex-wrap gap-1">
               {keySignals.map((sig: string, i: number) => (
-                <span
-                  key={i}
-                  className={`text-xs px-1.5 py-0.5 rounded font-mono ${sig.startsWith("+") ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}
-                >
-                  {sig}
-                </span>
+                <span key={i} className={`text-xs px-1.5 py-0.5 rounded font-mono ${sig.startsWith("+") ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}>{sig}</span>
               ))}
             </div>
           </div>
         )}
-
-        {/* Headlines */}
         {headlines.length > 0 && (
           <div>
             <div className="text-xs text-muted-foreground mb-1.5 font-medium flex items-center gap-1.5">
-              <Newspaper className="w-3 h-3" />
-              Recent Headlines
+              <Newspaper className="w-3 h-3" />Recent Headlines
             </div>
             <div className="space-y-1.5">
               {headlines.map((h: string, i: number) => (
@@ -254,7 +416,6 @@ function SentimentPanel({ ticker }: { ticker: string }) {
             </div>
           </div>
         )}
-
         {headlines.length === 0 && keySignals.length === 0 && (
           <p className="text-xs text-muted-foreground">No headlines found in the last 6 hours.</p>
         )}
@@ -263,26 +424,17 @@ function SentimentPanel({ ticker }: { ticker: string }) {
   );
 }
 
-// ── Trailing Stop Modal ──────────────────────────────────────────────────
-function TrailingStopModal({
-  ticker,
-  entryPrice,
-  onSet,
-  onSkip,
-}: {
-  ticker: string;
-  entryPrice: number;
-  onSet: (floor: number, trailPct: number) => void;
-  onSkip: () => void;
+// ── Trailing Stop Modal ────────────────────────────────────────────────────────
+function TrailingStopModal({ ticker, entryPrice, onSet, onSkip }: {
+  ticker: string; entryPrice: number;
+  onSet: (floor: number, trailPct: number) => void; onSkip: () => void;
 }) {
-  const defaultFloorPct = 10; // 10% below entry
-  const defaultTrailPct = 5;  // raise floor 5% when price rises
+  const defaultFloorPct = 10;
+  const defaultTrailPct = 5;
   const [floorPct, setFloorPct] = useState(String(defaultFloorPct));
   const [trailPct, setTrailPct] = useState(String(defaultTrailPct));
   const { toast } = useToast();
-
   const floorPrice = entryPrice * (1 - parseFloat(floorPct || "10") / 100);
-  const isPending = false;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -296,44 +448,27 @@ function TrailingStopModal({
             <div className="text-xs text-muted-foreground mt-0.5">Optional automated exit if the trade moves against you</div>
           </div>
         </div>
-
         <div className="p-3 rounded-lg bg-secondary/60 border border-border space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Floor % below entry</label>
-              <Input
-                data-testid="input-floor-pct"
-                type="number"
-                min="1" max="50" step="0.5"
-                value={floorPct}
-                onChange={e => setFloorPct(e.target.value)}
-                className="h-9 text-sm mono"
-              />
-              <div className="text-xs text-muted-foreground mt-1">
-                Floor: <span className="mono text-red-400">${floorPrice.toFixed(2)}</span>
-              </div>
+              <Input data-testid="input-floor-pct" type="number" min="1" max="50" step="0.5"
+                value={floorPct} onChange={e => setFloorPct(e.target.value)} className="h-9 text-sm mono" />
+              <div className="text-xs text-muted-foreground mt-1">Floor: <span className="mono text-red-400">${floorPrice.toFixed(2)}</span></div>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Trail % as price rises</label>
-              <Input
-                data-testid="input-trail-pct"
-                type="number"
-                min="0.5" max="20" step="0.5"
-                value={trailPct}
-                onChange={e => setTrailPct(e.target.value)}
-                className="h-9 text-sm mono"
-              />
+              <Input data-testid="input-trail-pct" type="number" min="0.5" max="20" step="0.5"
+                value={trailPct} onChange={e => setTrailPct(e.target.value)} className="h-9 text-sm mono" />
               <div className="text-xs text-muted-foreground mt-1">Floor rises with price</div>
             </div>
           </div>
           <div className="text-xs text-muted-foreground leading-relaxed border-t border-border pt-2">
-            GateKeeper will check every 15 minutes. If the price drops to the floor, it escalates to a <span className="text-red-400 font-medium">DANGER</span> alert with a one-click exit button. The floor rises automatically as your position gains — locking in profits.
+            GateKeeper AI checks every 15 minutes. If the price drops to the floor, it escalates to a <span className="text-red-400 font-medium">DANGER</span> alert with a one-click exit button. The floor rises automatically as your position gains — locking in profits.
           </div>
         </div>
-
         <div className="flex gap-3">
-          <Button
-            data-testid="btn-set-stop"
+          <Button data-testid="btn-set-stop"
             className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground gap-2"
             onClick={() => {
               const f = parseFloat(floorPct);
@@ -342,27 +477,18 @@ function TrailingStopModal({
                 toast({ title: "Invalid values", description: "Enter valid floor and trail percentages.", variant: "destructive" });
                 return;
               }
-              const absoluteFloor = entryPrice * (1 - f / 100);
-              onSet(absoluteFloor, t);
-            }}
-          >
-            <ShieldAlert className="w-4 h-4" />
-            Arm Trailing Stop
+              onSet(entryPrice * (1 - f / 100), t);
+            }}>
+            <ShieldAlert className="w-4 h-4" />Arm Trailing Stop
           </Button>
-          <Button
-            data-testid="btn-skip-stop"
-            variant="outline"
-            className="flex-1"
-            onClick={onSkip}
-          >
-            Skip
-          </Button>
+          <Button data-testid="btn-skip-stop" variant="outline" className="flex-1" onClick={onSkip}>Skip</Button>
         </div>
       </div>
     </div>
   );
 }
 
+// ── Main DecisionGate Page ─────────────────────────────────────────────────────
 export default function DecisionGate() {
   const { data: pending = [], isLoading } = useQuery<Recommendation[]>({ queryKey: ["/api/recommendations/pending"] });
   const [activeIdx, setActiveIdx] = useState(0);
@@ -374,7 +500,6 @@ export default function DecisionGate() {
 
   const decideMutation = useMutation({
     mutationFn: async ({ id, decision, modifiedShares, note }: { id: number; decision: string; modifiedShares?: number; note?: string }) => {
-      // Auto-retry once on 503 (Railway cold start) with a 4-second pause
       try {
         return await apiRequest("POST", `/api/recommendations/${id}/decide`, { decision, modifiedShares, note });
       } catch (e: any) {
@@ -394,12 +519,9 @@ export default function DecisionGate() {
         try {
           await apiRequest("POST", "/api/alpaca/execute", { recommendationId: vars.id });
           toast({ title: "Trade submitted to Alpaca", description: `${vars.decision === "MODIFIED" ? `${vars.modifiedShares} shares` : `${updated?.shares} shares`} of ${updated?.ticker} sent as market order.` });
-          // Only show trailing stop modal for BUY actions
           if (updated?.action === "BUY" || vars.decision === "APPROVED" || vars.decision === "MODIFIED") {
             const entryPrice = updated?.priceAtRecommendation ?? updated?.targetPrice ?? 0;
-            if (entryPrice > 0) {
-              setStopModal({ ticker: updated?.ticker ?? "", entryPrice });
-            }
+            if (entryPrice > 0) setStopModal({ ticker: updated?.ticker ?? "", entryPrice });
           }
         } catch (e: any) {
           toast({ title: "Decision recorded — execution failed", description: e.message, variant: "destructive" });
@@ -413,7 +535,6 @@ export default function DecisionGate() {
       setActiveIdx(0);
     },
     onError: (e: any) => {
-      // Decision was NOT recorded — card stays visible, user can retry
       const is503 = e.message?.includes("503") || e.message?.includes("Service Unavailable") || e.message?.includes("unavailable");
       toast({
         title: is503 ? "Server unavailable — decision NOT recorded" : "Decision failed — please try again",
@@ -422,7 +543,6 @@ export default function DecisionGate() {
           : `Error: ${e.message}. Your signal has not been lost.`,
         variant: "destructive",
       });
-      // Re-fetch pending to ensure the card reappears if it was optimistically removed
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });
     },
   });
@@ -446,23 +566,22 @@ export default function DecisionGate() {
 
   if (isLoading) return <div className="p-6 text-muted-foreground text-sm">Loading...</div>;
 
-  if (!rec) {
-    return (
-      <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <ShieldCheck className="w-12 h-12 text-primary/40 mb-3" />
-        <h2 className="text-lg font-semibold text-foreground">Gate is clear</h2>
-        <p className="text-sm text-muted-foreground mt-1">No pending GateKeeper AI recommendations. Generate signals to scan for new opportunities.</p>
-      </div>
-    );
-  }
+  if (!rec) return (
+    <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
+      <ShieldCheck className="w-12 h-12 text-primary/40 mb-3" />
+      <h2 className="text-lg font-semibold text-foreground">Gate is clear</h2>
+      <p className="text-sm text-muted-foreground mt-1">No pending GateKeeper AI recommendations. Generate signals to scan for new opportunities.</p>
+    </div>
+  );
 
-  const expiresIn = Math.max(0, Math.floor((new Date(rec.expiresAt).getTime() - Date.now()) / 60000));
-  const catalysts: string[] = JSON.parse(rec.catalysts || "[]");
+  const catalysts: string[] = (() => { try { return JSON.parse(rec.catalysts || "[]"); } catch { return []; } })();
   const signalStrength = rec.signalStrength ?? 50;
   const tradeStyleConf = rec.tradeStyle ? tradeStyleConfig[rec.tradeStyle] : tradeStyleConfig.SWING;
+  const confPct = confidencePct[rec.confidence ?? "MEDIUM"] ?? 61;
 
   return (
     <div className="p-6 space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Decision Gate</h1>
@@ -470,12 +589,9 @@ export default function DecisionGate() {
         </div>
         <div className="flex gap-1">
           {pending.map((r, i) => (
-            <button
-              key={r.id}
-              data-testid={`queue-tab-${i}`}
+            <button key={r.id} data-testid={`queue-tab-${i}`}
               onClick={() => { setActiveIdx(i); setMode("view"); }}
-              className={`w-8 h-8 rounded-md text-xs font-medium transition-colors ${i === activeIdx ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
-            >
+              className={`w-8 h-8 rounded-md text-xs font-medium transition-colors ${i === activeIdx ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
               {i + 1}
             </button>
           ))}
@@ -487,7 +603,7 @@ export default function DecisionGate() {
         <div className="col-span-2 space-y-4">
           <Card className="border-primary/20">
             <CardContent className="pt-6 pb-6 space-y-5">
-              {/* Header */}
+              {/* Header row */}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${rec.action === "BUY" ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>
@@ -496,8 +612,13 @@ export default function DecisionGate() {
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-2xl font-bold mono">{rec.ticker}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${rec.confidence === "HIGH" ? "badge-high" : rec.confidence === "MEDIUM" ? "badge-medium" : "badge-speculative"}`}>
-                        {rec.confidence}
+                      {/* Confidence badge with numeric % */}
+                      <span
+                        data-testid="badge-confidence"
+                        className={`text-xs px-2 py-0.5 rounded font-medium ${confidenceClass[rec.confidence ?? "MEDIUM"] ?? "badge-medium"}`}
+                        title={`${confPct}% confidence score`}
+                      >
+                        {rec.confidence} · {confPct}%
                       </span>
                       {rec.tradeStyle && (
                         <span className={`text-xs px-2 py-0.5 rounded border font-medium ${tradeStyleConf.bg} ${tradeStyleConf.color}`}>
@@ -515,10 +636,8 @@ export default function DecisionGate() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-shrink-0">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span className={expiresIn < 30 ? "text-yellow-400" : ""}>{expiresIn > 60 ? `${Math.floor(expiresIn / 60)}h` : `${expiresIn}m`} to expire</span>
-                </div>
+                {/* Live expiration countdown */}
+                <ExpirationCountdown expiresAt={rec.expiresAt} />
               </div>
 
               {/* Hold window */}
@@ -532,6 +651,9 @@ export default function DecisionGate() {
                 <div className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wide">Why GateKeeper AI recommends this</div>
                 <p className="text-sm text-foreground leading-relaxed">{rec.reasoning}</p>
               </div>
+
+              {/* ELI5 Button */}
+              <ELI5Panel rec={rec} />
 
               {/* Catalysts */}
               <div>
@@ -568,6 +690,9 @@ export default function DecisionGate() {
                 </div>
               </div>
 
+              {/* What-If Scenario Panel */}
+              <WhatIfPanel rec={rec} />
+
               {/* Modify mode */}
               {mode === "modify" && (
                 <div className="p-4 rounded-lg bg-secondary/60 border border-border space-y-3">
@@ -575,67 +700,45 @@ export default function DecisionGate() {
                   <div className="flex gap-3">
                     <div className="flex-1">
                       <label className="text-xs text-muted-foreground mb-1 block">Shares (GateKeeper AI suggested: {rec.shares})</label>
-                      <Input
-                        data-testid="input-modified-shares"
-                        type="number"
-                        placeholder={String(rec.shares)}
-                        value={modShares}
-                        onChange={e => setModShares(e.target.value)}
-                        className="h-9 text-sm mono"
-                      />
+                      <Input data-testid="input-modified-shares" type="number" placeholder={String(rec.shares)}
+                        value={modShares} onChange={e => setModShares(e.target.value)} className="h-9 text-sm mono" />
                     </div>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Your reasoning (optional)</label>
-                    <Textarea
-                      data-testid="input-decision-note"
-                      placeholder="Why are you modifying this trade?"
-                      value={note}
-                      onChange={e => setNote(e.target.value)}
-                      className="text-sm min-h-[60px] resize-none"
-                    />
+                    <Textarea data-testid="input-decision-note" placeholder="Why are you modifying this trade?"
+                      value={note} onChange={e => setNote(e.target.value)} className="text-sm min-h-[60px] resize-none" />
                   </div>
                 </div>
               )}
 
               {/* Decision buttons */}
               <div className="flex items-center gap-3 pt-1">
-                <Button
-                  data-testid="btn-approve"
+                <Button data-testid="btn-approve"
                   className="flex-1 gap-2 bg-green-600 hover:bg-green-500 text-white"
                   onClick={() => decideMutation.mutate({ id: rec.id, decision: "APPROVED" })}
-                  disabled={decideMutation.isPending}
-                >
+                  disabled={decideMutation.isPending}>
                   <CheckCircle className="w-4 h-4" />
                   {decideMutation.isPending ? "Submitting…" : "Approve & Execute"}
                 </Button>
                 {mode === "modify" ? (
-                  <Button
-                    data-testid="btn-approve-modified"
-                    variant="outline"
+                  <Button data-testid="btn-approve-modified" variant="outline"
                     className="flex-1 gap-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
                     onClick={() => decideMutation.mutate({ id: rec.id, decision: "MODIFIED", modifiedShares: Number(modShares) || rec.shares, note })}
-                    disabled={decideMutation.isPending}
-                  >
+                    disabled={decideMutation.isPending}>
                     <Edit3 className="w-4 h-4" />Approve Modified
                   </Button>
                 ) : (
-                  <Button
-                    data-testid="btn-modify"
-                    variant="outline"
+                  <Button data-testid="btn-modify" variant="outline"
                     className="flex-1 gap-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
-                    onClick={() => setMode("modify")}
-                  >
+                    onClick={() => setMode("modify")}>
                     <Edit3 className="w-4 h-4" />Modify
                   </Button>
                 )}
-                <Button
-                  data-testid="btn-reject"
-                  variant="outline"
+                <Button data-testid="btn-reject" variant="outline"
                   className="flex-1 gap-2 border-red-500/40 text-red-400 hover:bg-red-500/10"
                   onClick={() => decideMutation.mutate({ id: rec.id, decision: "REJECTED", note })}
-                  disabled={decideMutation.isPending}
-                >
+                  disabled={decideMutation.isPending}>
                   <XCircle className="w-4 h-4" />
                   {decideMutation.isPending ? "Submitting…" : "Reject"}
                 </Button>
@@ -649,49 +752,27 @@ export default function DecisionGate() {
 
         {/* Side panel */}
         <div className="space-y-4">
-          {/* Live sentiment for this ticker */}
           <SentimentPanel ticker={rec.ticker} />
-
-          {/* Position sizing note */}
           <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Position Context</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Position Context</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-xs text-muted-foreground">
-              <div className="flex justify-between">
-                <span>Recommended shares</span>
-                <span className="font-medium text-foreground mono">{rec.shares}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Entry price</span>
-                <span className="font-medium text-foreground mono">${fmt(rec.priceAtRecommendation)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Position value</span>
-                <span className="font-medium text-foreground mono">${fmt(rec.shares * rec.priceAtRecommendation, 0)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Max loss at stop</span>
-                <span className="font-medium loss">${fmt(rec.shares * rec.priceAtRecommendation * (rec.downsidePercent / 100), 0)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Target gain</span>
-                <span className="font-medium gain">${fmt(rec.shares * rec.priceAtRecommendation * (rec.upsidePercent / 100), 0)}</span>
-              </div>
+              <div className="flex justify-between"><span>Recommended shares</span><span className="font-medium text-foreground mono">{rec.shares}</span></div>
+              <div className="flex justify-between"><span>Entry price</span><span className="font-medium text-foreground mono">${fmt(rec.priceAtRecommendation)}</span></div>
+              <div className="flex justify-between"><span>Position value</span><span className="font-medium text-foreground mono">${fmt(rec.shares * rec.priceAtRecommendation, 0)}</span></div>
+              <div className="flex justify-between"><span>Max loss at stop</span><span className="font-medium loss">${fmt(rec.shares * rec.priceAtRecommendation * (rec.downsidePercent / 100), 0)}</span></div>
+              <div className="flex justify-between"><span>Target gain</span><span className="font-medium gain">${fmt(rec.shares * rec.priceAtRecommendation * (rec.upsidePercent / 100), 0)}</span></div>
               <p className="pt-1 border-t border-border">Risk is sized to max 5% of account equity. Modify shares to adjust your personal risk tolerance.</p>
             </CardContent>
           </Card>
         </div>
       </div>
 
-      {/* Trailing Stop Modal — shown after approving a BUY */}
+      {/* Trailing Stop Modal */}
       {stopModal && (
         <TrailingStopModal
           ticker={stopModal.ticker}
           entryPrice={stopModal.entryPrice}
-          onSet={(floor, trailPct) => {
-            setStopMutation.mutate({ ticker: stopModal.ticker, floor, trailPct });
-          }}
+          onSet={(floor, trailPct) => setStopMutation.mutate({ ticker: stopModal.ticker, floor, trailPct })}
           onSkip={() => setStopModal(null)}
         />
       )}

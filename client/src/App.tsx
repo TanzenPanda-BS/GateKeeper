@@ -12,6 +12,9 @@ import TrustPage from "./pages/TrustPage";
 import ExceptionRules from "./pages/ExceptionRules";
 import SentimentPage from "./pages/SentimentPage";
 import Onboarding from "./pages/Onboarding";
+import ShadowPortfolio from "./pages/ShadowPortfolio";
+import Scorecard from "./pages/Scorecard";
+import Disclaimer from "./pages/Disclaimer";
 import NotFound from "./pages/not-found";
 
 export default function App() {
@@ -30,6 +33,9 @@ export default function App() {
               <Route path="/rules" component={ExceptionRules} />
               <Route path="/sentiment" component={SentimentPage} />
               <Route path="/onboarding" component={Onboarding} />
+              <Route path="/shadow" component={ShadowPortfolio} />
+              <Route path="/scorecard" component={Scorecard} />
+              <Route path="/disclaimer" component={Disclaimer} />
               <Route component={NotFound} />
             </Switch>
           </main>

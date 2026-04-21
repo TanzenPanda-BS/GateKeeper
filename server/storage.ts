@@ -194,6 +194,9 @@ export interface IStorage {
   // Positions
   getPositions(): Position[];
   upsertPosition(data: InsertPosition): Position;
+  // Preserve trailing stop columns on existing rows (use during Alpaca sync)
+  upsertPositionPreserveStop(data: InsertPosition): Position;
+  deletePosition(ticker: string): void;
   clearPositions(): void;
   // Exception Rules
   getExceptionRules(): ExceptionRule[];
@@ -347,6 +350,28 @@ export class Storage implements IStorage {
     const ex = db.select().from(positions).where(eq(positions.ticker, data.ticker)).get();
     if (ex) return db.update(positions).set(data).where(eq(positions.ticker, data.ticker)).returning().get();
     return db.insert(positions).values(data).returning().get();
+  }
+  // Update market data columns only — NEVER touches stop columns on existing rows
+  upsertPositionPreserveStop(data: InsertPosition): Position {
+    const ex = db.select().from(positions).where(eq(positions.ticker, data.ticker)).get();
+    if (ex) {
+      // Only update the market-data fields; leave stop_loss_floor / trail_pct / etc. untouched
+      sqlite.prepare(`
+        UPDATE positions
+        SET shares = ?, avg_cost = ?, current_price = ?, market_value = ?,
+            unrealized_pnl = ?, unrealized_pct = ?, is_auto_managed = ?, updated_at = ?
+        WHERE ticker = ?
+      `).run(
+        data.shares, data.avgCost, data.currentPrice, data.marketValue,
+        data.unrealizedPnl, data.unrealizedPct, data.isAutoManaged, data.updatedAt,
+        data.ticker
+      );
+      return db.select().from(positions).where(eq(positions.ticker, data.ticker)).get()!;
+    }
+    return db.insert(positions).values(data).returning().get();
+  }
+  deletePosition(ticker: string): void {
+    db.delete(positions).where(eq(positions.ticker, ticker)).run();
   }
   clearPositions() { db.delete(positions).run(); }
 
