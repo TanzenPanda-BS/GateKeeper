@@ -520,6 +520,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // POST /api/positions/stops/check — manually trigger a stop check
+  // MUST be registered BEFORE /:ticker/stop to prevent "stops" matching as :ticker
+  app.post("/api/positions/stops/check", async (_req, res) => {
+    try {
+      const result = await checkAllStops();
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // POST /api/positions/:ticker/stop — set or update a trailing stop
   // body: { floor: number, trailPct: number }
   app.post("/api/positions/:ticker/stop", (req, res) => {
@@ -546,14 +555,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const ticker = req.params.ticker.toUpperCase();
       storage.clearStop(ticker);
       res.json({ ok: true, ticker });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
-
-  // POST /api/positions/stops/check — manually trigger a stop check
-  app.post("/api/positions/stops/check", async (_req, res) => {
-    try {
-      const result = await checkAllStops();
-      res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
