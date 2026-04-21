@@ -117,9 +117,11 @@ export default function SentimentPage() {
 
   const { data: history = [] } = useQuery<HistoryRow[]>({
     queryKey: ["/api/sentiment/history", selectedTicker],
-    queryFn: () => selectedTicker
-      ? apiRequest("GET", `/api/sentiment/history?ticker=${selectedTicker}&days=7`) as Promise<HistoryRow[]>
-      : Promise.resolve([]),
+    queryFn: async () => {
+      if (!selectedTicker) return [];
+      const res = await apiRequest("GET", `/api/sentiment/history?ticker=${selectedTicker}&days=7`);
+      return res.json() as Promise<HistoryRow[]>;
+    },
     enabled: !!selectedTicker,
     refetchInterval: 0,
   });
