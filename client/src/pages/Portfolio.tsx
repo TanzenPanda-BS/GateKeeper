@@ -18,23 +18,33 @@ function StopRow({ pos, onEdit, onCancel }: {
   onCancel: () => void;
 }) {
   if (!pos.stopActive) return null;
-  const floor = pos.stopLossFloor ?? 0;
+  const isShort = pos.shares < 0;
+  const ceiling = pos.stopLossFloor ?? 0;  // for shorts this is the ceiling; for longs it's the floor
   const current = pos.currentPrice;
   const hwm = pos.trailHighWaterMark ?? current;
-  const distPct = floor > 0 ? ((current - floor) / current) * 100 : null;
+
+  // distPct = how far price is from the stop level (positive = safe cushion, negative = breached)
+  // Long:  cushion = (current - floor) / current   → positive while above floor
+  // Short: cushion = (ceiling - current) / current → positive while below ceiling
+  const distPct = ceiling > 0
+    ? isShort
+      ? ((ceiling - current) / current) * 100
+      : ((current - ceiling) / current) * 100
+    : null;
 
   const statusColor =
     distPct === null ? "text-muted-foreground" :
     distPct <= 0  ? "text-red-400" :
     distPct <= 5  ? "text-yellow-400" :
     "text-green-400";
+  const stopLabel = isShort ? "ceiling" : "floor";
   const statusLabel =
     distPct === null ? "—" :
     distPct <= 0  ? "BREACHED" :
-    distPct <= 5  ? `${distPct.toFixed(1)}% to floor` :
+    distPct <= 5  ? `${distPct.toFixed(1)}% to ${stopLabel}` :
     `${distPct.toFixed(1)}% cushion`;
 
-  const barWidth = distPct !== null ? Math.min(100, Math.max(0, distPct * 4)) : 0; // visual scale: 25% = full green
+  const barWidth = distPct !== null ? Math.min(100, Math.max(0, distPct * 4)) : 0;
   const barColor = distPct === null ? "bg-muted" : distPct <= 0 ? "bg-red-500" : distPct <= 5 ? "bg-yellow-500" : "bg-green-500";
 
   return (
@@ -42,7 +52,7 @@ function StopRow({ pos, onEdit, onCancel }: {
       <div className="flex items-center justify-between text-xs mb-1.5">
         <span className="flex items-center gap-1.5 text-muted-foreground font-medium">
           <ShieldAlert className="w-3 h-3" />
-          Trailing Stop
+          {isShort ? "Trailing Stop (Short)" : "Trailing Stop"}
         </span>
         <span className={`font-semibold mono ${statusColor}`}>{statusLabel}</span>
       </div>
@@ -50,7 +60,7 @@ function StopRow({ pos, onEdit, onCancel }: {
         <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${barWidth}%` }} />
       </div>
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <div>Floor <span className="mono text-red-400">${fmt(floor)}</span></div>
+        <div>{isShort ? "Ceiling" : "Floor"} <span className="mono text-red-400">${fmt(ceiling)}</span></div>
         <div>Current <span className="mono text-foreground">${fmt(current)}</span></div>
         <div>HWM <span className="mono text-green-400">${fmt(hwm)}</span></div>
         <div>Trail <span className="mono text-primary">{pos.trailPct ?? 0}%</span></div>
@@ -318,7 +328,12 @@ export default function Portfolio() {
   const totalPnl = positions.reduce((s, p) => s + p.unrealizedPnl, 0);
 
   const activeStops = positions.filter(p => p.stopActive === 1);
-  const breachedStops = activeStops.filter(p => p.stopLossFloor != null && p.currentPrice <= p.stopLossFloor);
+  // Direction-aware breach: longs breach below floor, shorts breach above ceiling
+  const breachedStops = activeStops.filter(p => {
+    if (p.stopLossFloor == null) return false;
+    const isShort = p.shares < 0;
+    return isShort ? p.currentPrice >= p.stopLossFloor : p.currentPrice <= p.stopLossFloor;
+  });
 
   return (
     <div className="p-6 space-y-5">
@@ -376,7 +391,10 @@ export default function Portfolio() {
               Trailing Stop Breached — {breachedStops.map(p => p.ticker).join(", ")}
             </div>
             <div className="text-xs text-muted-foreground mt-0.5">
-              The price has fallen below the floor you set. Use the Exit Now button in the table to close the position.
+              {breachedStops.some(p => p.shares < 0)
+                ? "A short position's price rose above the stop ceiling. Use the Exit Now button in the table to cover."
+                : "The price has fallen below the stop floor. Use the Exit Now button in the table to close the position."
+              }
             </div>
           </div>
         </div>
