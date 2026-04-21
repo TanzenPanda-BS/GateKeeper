@@ -5,7 +5,7 @@ import {
   ShieldCheck, CheckCircle, XCircle, Edit3, Clock,
   TrendingUp, TrendingDown, Target, Zap, CalendarClock,
   BarChart2, Timer, Newspaper, AlertTriangle, Activity,
-  RefreshCw,
+  RefreshCw, ShieldAlert,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -263,12 +263,113 @@ function SentimentPanel({ ticker }: { ticker: string }) {
   );
 }
 
+// ── Trailing Stop Modal ──────────────────────────────────────────────────
+function TrailingStopModal({
+  ticker,
+  entryPrice,
+  onSet,
+  onSkip,
+}: {
+  ticker: string;
+  entryPrice: number;
+  onSet: (floor: number, trailPct: number) => void;
+  onSkip: () => void;
+}) {
+  const defaultFloorPct = 10; // 10% below entry
+  const defaultTrailPct = 5;  // raise floor 5% when price rises
+  const [floorPct, setFloorPct] = useState(String(defaultFloorPct));
+  const [trailPct, setTrailPct] = useState(String(defaultTrailPct));
+  const { toast } = useToast();
+
+  const floorPrice = entryPrice * (1 - parseFloat(floorPct || "10") / 100);
+  const isPending = false;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-background border border-border rounded-xl shadow-2xl p-6 w-[420px] space-y-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+            <ShieldAlert className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <div className="font-semibold text-sm">Set Trailing Stop — {ticker}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">Optional automated exit if the trade moves against you</div>
+          </div>
+        </div>
+
+        <div className="p-3 rounded-lg bg-secondary/60 border border-border space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Floor % below entry</label>
+              <Input
+                data-testid="input-floor-pct"
+                type="number"
+                min="1" max="50" step="0.5"
+                value={floorPct}
+                onChange={e => setFloorPct(e.target.value)}
+                className="h-9 text-sm mono"
+              />
+              <div className="text-xs text-muted-foreground mt-1">
+                Floor: <span className="mono text-red-400">${floorPrice.toFixed(2)}</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Trail % as price rises</label>
+              <Input
+                data-testid="input-trail-pct"
+                type="number"
+                min="0.5" max="20" step="0.5"
+                value={trailPct}
+                onChange={e => setTrailPct(e.target.value)}
+                className="h-9 text-sm mono"
+              />
+              <div className="text-xs text-muted-foreground mt-1">Floor rises with price</div>
+            </div>
+          </div>
+          <div className="text-xs text-muted-foreground leading-relaxed border-t border-border pt-2">
+            GateKeeper will check every 15 minutes. If the price drops to the floor, it escalates to a <span className="text-red-400 font-medium">DANGER</span> alert with a one-click exit button. The floor rises automatically as your position gains — locking in profits.
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <Button
+            data-testid="btn-set-stop"
+            className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground gap-2"
+            onClick={() => {
+              const f = parseFloat(floorPct);
+              const t = parseFloat(trailPct);
+              if (isNaN(f) || isNaN(t) || f <= 0 || t <= 0) {
+                toast({ title: "Invalid values", description: "Enter valid floor and trail percentages.", variant: "destructive" });
+                return;
+              }
+              const absoluteFloor = entryPrice * (1 - f / 100);
+              onSet(absoluteFloor, t);
+            }}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            Arm Trailing Stop
+          </Button>
+          <Button
+            data-testid="btn-skip-stop"
+            variant="outline"
+            className="flex-1"
+            onClick={onSkip}
+          >
+            Skip
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DecisionGate() {
   const { data: pending = [], isLoading } = useQuery<Recommendation[]>({ queryKey: ["/api/recommendations/pending"] });
   const [activeIdx, setActiveIdx] = useState(0);
   const [modShares, setModShares] = useState("");
   const [note, setNote] = useState("");
   const [mode, setMode] = useState<"view" | "modify">("view");
+  const [stopModal, setStopModal] = useState<{ ticker: string; entryPrice: number } | null>(null);
   const { toast } = useToast();
 
   const decideMutation = useMutation({
@@ -293,6 +394,13 @@ export default function DecisionGate() {
         try {
           await apiRequest("POST", "/api/alpaca/execute", { recommendationId: vars.id });
           toast({ title: "Trade submitted to Alpaca", description: `${vars.decision === "MODIFIED" ? `${vars.modifiedShares} shares` : `${updated?.shares} shares`} of ${updated?.ticker} sent as market order.` });
+          // Only show trailing stop modal for BUY actions
+          if (updated?.action === "BUY" || vars.decision === "APPROVED" || vars.decision === "MODIFIED") {
+            const entryPrice = updated?.priceAtRecommendation ?? updated?.targetPrice ?? 0;
+            if (entryPrice > 0) {
+              setStopModal({ ticker: updated?.ticker ?? "", entryPrice });
+            }
+          }
         } catch (e: any) {
           toast({ title: "Decision recorded — execution failed", description: e.message, variant: "destructive" });
         }
@@ -316,6 +424,21 @@ export default function DecisionGate() {
       });
       // Re-fetch pending to ensure the card reappears if it was optimistically removed
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });
+    },
+  });
+
+  const setStopMutation = useMutation({
+    mutationFn: ({ ticker, floor, trailPct }: { ticker: string; floor: number; trailPct: number }) =>
+      apiRequest("POST", `/api/positions/${ticker}/stop`, { floor, trailPct }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/positions/stops"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+      toast({ title: "Trailing stop armed", description: `${vars.ticker} will alert if price falls to $${vars.floor.toFixed(2)}. Floor rises automatically with gains.` });
+      setStopModal(null);
+    },
+    onError: (e: any) => {
+      toast({ title: "Stop not set", description: e.message, variant: "destructive" });
+      setStopModal(null);
     },
   });
 
@@ -560,6 +683,18 @@ export default function DecisionGate() {
           </Card>
         </div>
       </div>
+
+      {/* Trailing Stop Modal — shown after approving a BUY */}
+      {stopModal && (
+        <TrailingStopModal
+          ticker={stopModal.ticker}
+          entryPrice={stopModal.entryPrice}
+          onSet={(floor, trailPct) => {
+            setStopMutation.mutate({ ticker: stopModal.ticker, floor, trailPct });
+          }}
+          onSkip={() => setStopModal(null)}
+        />
+      )}
     </div>
   );
 }

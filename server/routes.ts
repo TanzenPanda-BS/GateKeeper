@@ -10,6 +10,7 @@ import {
 } from "./engine";
 import { detectEarningsProximity } from "./earnings";
 import { analyzeSentiment, evaluateSafetyNet } from "./sentiment";
+import { checkAllStops } from "./trailingStop";
 
 // ── Bootstrap: initialize beta session on first run ──────────────────────────
 async function initBetaSession() {
@@ -484,6 +485,52 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       alerts.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
 
       res.json(alerts);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Trailing Stop Monitor ────────────────────────────────────────────────
+
+  // GET /api/positions/stops — list all active stops
+  app.get("/api/positions/stops", (_req, res) => {
+    try {
+      res.json(storage.getActiveStops());
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/positions/:ticker/stop — set or update a trailing stop
+  // body: { floor: number, trailPct: number }
+  app.post("/api/positions/:ticker/stop", (req, res) => {
+    try {
+      const ticker = req.params.ticker.toUpperCase();
+      const { floor, trailPct } = req.body;
+      if (floor == null || trailPct == null) {
+        return res.status(400).json({ error: "floor and trailPct are required" });
+      }
+      // Get current position price to seed the high-water mark
+      const positions = storage.getPositions();
+      const pos = positions.find(p => p.ticker === ticker);
+      if (!pos) return res.status(404).json({ error: "Position not found" });
+
+      const currentPrice = pos.currentPrice;
+      storage.setStop(ticker, parseFloat(floor), parseFloat(trailPct), currentPrice);
+      res.json({ ok: true, ticker, floor: parseFloat(floor), trailPct: parseFloat(trailPct), highWaterMark: currentPrice });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE /api/positions/:ticker/stop — cancel a trailing stop
+  app.delete("/api/positions/:ticker/stop", (req, res) => {
+    try {
+      const ticker = req.params.ticker.toUpperCase();
+      storage.clearStop(ticker);
+      res.json({ ok: true, ticker });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/positions/stops/check — manually trigger a stop check
+  app.post("/api/positions/stops/check", async (_req, res) => {
+    try {
+      const result = await checkAllStops();
+      res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

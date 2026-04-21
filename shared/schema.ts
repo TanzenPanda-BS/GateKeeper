@@ -66,6 +66,11 @@ export const positions = sqliteTable("positions", {
   unrealizedPct: real("unrealized_pct").notNull(),
   isAutoManaged: integer("is_auto_managed").notNull().default(0),
   updatedAt: text("updated_at").notNull(),
+  // ── Trailing stop fields ─────────────────────────────────────────────────
+  stopLossFloor: real("stop_loss_floor"),          // absolute $ price floor — sell if breached
+  trailPct: real("trail_pct"),                     // % to raise floor when price makes new high
+  trailHighWaterMark: real("trail_high_water_mark"), // highest price seen since stop was set
+  stopActive: integer("stop_active").notNull().default(0), // 1 = stop is armed
 });
 
 // ── Exception engine rules ───────────────────────────────────────────────────

@@ -168,6 +168,11 @@ try {
 try {
   sqlite.exec(`ALTER TABLE trust_metrics ADD COLUMN auto_trade_win_rate REAL NOT NULL DEFAULT 0`);
 } catch {}
+// Trailing stop columns on positions
+try { sqlite.exec(`ALTER TABLE positions ADD COLUMN stop_loss_floor REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE positions ADD COLUMN trail_pct REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE positions ADD COLUMN trail_high_water_mark REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE positions ADD COLUMN stop_active INTEGER NOT NULL DEFAULT 0`); } catch {}
 
 export interface IStorage {
   // Beta session
@@ -216,6 +221,11 @@ export interface IStorage {
   // Sentiment history (P4 — 7-day chart)
   addSentimentSnapshot(ticker: string, score: number, alertLevel: string): void;
   getSentimentHistory(ticker: string, days?: number): SentimentHistory[];
+  // Trailing stop monitor
+  setStop(ticker: string, floor: number, trailPct: number, currentPrice: number): void;
+  updateHighWaterMark(ticker: string, newPrice: number, newFloor: number): void;
+  clearStop(ticker: string): void;
+  getActiveStops(): Position[];
 }
 
 export class Storage implements IStorage {
@@ -491,6 +501,42 @@ export class Storage implements IStorage {
       id: r.id, ticker: r.ticker, score: r.score, alertLevel: r.alert_level,
       snapshotDate: r.snapshot_date, snapshotHour: r.snapshot_hour, createdAt: r.created_at
     })) as SentimentHistory[];
+  }
+
+  // ── Trailing Stop Monitor ─────────────────────────────────────────────────
+  setStop(ticker: string, floor: number, trailPct: number, currentPrice: number): void {
+    sqlite.prepare(`
+      UPDATE positions
+      SET stop_loss_floor = ?, trail_pct = ?, trail_high_water_mark = ?, stop_active = 1
+      WHERE ticker = ?
+    `).run(floor, trailPct, currentPrice, ticker);
+  }
+  updateHighWaterMark(ticker: string, newPrice: number, newFloor: number): void {
+    sqlite.prepare(`
+      UPDATE positions
+      SET trail_high_water_mark = ?, stop_loss_floor = ?
+      WHERE ticker = ? AND stop_active = 1
+    `).run(newPrice, newFloor, ticker);
+  }
+  clearStop(ticker: string): void {
+    sqlite.prepare(`
+      UPDATE positions
+      SET stop_loss_floor = NULL, trail_pct = NULL, trail_high_water_mark = NULL, stop_active = 0
+      WHERE ticker = ?
+    `).run(ticker);
+  }
+  getActiveStops(): Position[] {
+    const rows = sqlite.prepare(`
+      SELECT * FROM positions WHERE stop_active = 1
+    `).all() as any[];
+    return rows.map(r => ({
+      id: r.id, ticker: r.ticker, shares: r.shares, avgCost: r.avg_cost,
+      currentPrice: r.current_price, marketValue: r.market_value,
+      unrealizedPnl: r.unrealized_pnl, unrealizedPct: r.unrealized_pct,
+      isAutoManaged: r.is_auto_managed, updatedAt: r.updated_at,
+      stopLossFloor: r.stop_loss_floor, trailPct: r.trail_pct,
+      trailHighWaterMark: r.trail_high_water_mark, stopActive: r.stop_active,
+    })) as Position[];
   }
 }
 
