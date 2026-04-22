@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm ci && ./node_modules/.bin/tsx script/build.ts"
+buildCommand = "./node_modules/.bin/tsx script/build.ts"
 
 [deploy]
 startCommand = "node dist/index.cjs"
