@@ -95,7 +95,7 @@ export default function Sidebar() {
           <span className="text-xs text-muted-foreground">{isOpen ? "Market Open" : "Market Closed"}</span>
         </div>
         <div className="text-xs text-muted-foreground">
-          Day {daysActive} of 90-day evaluation
+          Day {daysActive} of 90-day evaluation · v2
         </div>
         <div className="mt-2 h-1.5 bg-secondary rounded-full overflow-hidden">
           <div className="h-full bg-primary/60 rounded-full" style={{ width: `${Math.min(progressPct, 100)}%` }} />

@@ -3,6 +3,7 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 const API_BASE = "__PORT_5000__".startsWith("__") 
   ? "https://gatekeeper-production-e843.up.railway.app" 
   : "__PORT_5000__";
+const _v = "2.0.0"; // cache-bust — do not remove
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
