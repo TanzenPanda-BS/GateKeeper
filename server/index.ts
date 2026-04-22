@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -11,6 +12,22 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// Allow cross-origin requests from Perplexity CDN and local dev
+app.use(cors({
+  origin: [
+    "https://www.perplexity.ai",
+    "https://perplexity.ai",
+    "https://sites.pplx.app",
+    /\.perplexity\.ai$/,
+    /\.pplx\.app$/,
+    "http://localhost:5173",
+    "http://localhost:5000",
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+}));
 
 app.use(
   express.json({
