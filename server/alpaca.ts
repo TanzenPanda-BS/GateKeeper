@@ -1,8 +1,10 @@
 // Alpaca Paper Trading API integration
-const ALPACA_KEY = process.env.ALPACA_KEY;
-const ALPACA_SECRET = process.env.ALPACA_SECRET;
+const ALPACA_KEY    = process.env.ALPACA_KEY    ?? "";
+const ALPACA_SECRET = process.env.ALPACA_SECRET ?? "";
 if (!ALPACA_KEY || !ALPACA_SECRET) {
-  throw new Error("[FATAL] ALPACA_KEY and ALPACA_SECRET must be set as environment variables. Never hardcode secrets in source.");
+  // Warn but don't crash — server stays up so /api/positions and DB routes still work.
+  // Alpaca-dependent routes will return a clear error instead of a 503 crash loop.
+  console.error("[WARN] ALPACA_KEY and ALPACA_SECRET are not set. Alpaca routes will return errors until keys are configured in Railway environment variables.");
 }
 const BROKER_BASE = "https://paper-api.alpaca.markets/v2";
 const DATA_BASE = "https://data.alpaca.markets/v2";
@@ -14,12 +16,18 @@ const headers = {
 };
 
 async function alpacaGet(base: string, path: string) {
+  if (!ALPACA_KEY || !ALPACA_SECRET) {
+    throw new Error("Alpaca API keys are not configured. Set ALPACA_KEY and ALPACA_SECRET in Railway environment variables.");
+  }
   const res = await fetch(`${base}${path}`, { headers });
   if (!res.ok) throw new Error(`Alpaca ${path} → ${res.status}: ${await res.text()}`);
   return res.json();
 }
 
 async function alpacaPost(path: string, body: object) {
+  if (!ALPACA_KEY || !ALPACA_SECRET) {
+    throw new Error("Alpaca API keys are not configured. Set ALPACA_KEY and ALPACA_SECRET in Railway environment variables.");
+  }
   const res = await fetch(`${BROKER_BASE}${path}`, {
     method: "POST",
     headers,

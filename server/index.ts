@@ -13,21 +13,35 @@ declare module "http" {
   }
 }
 
-// Allow cross-origin requests from Perplexity CDN and local dev
+// ── CORS — allow Perplexity CDN and local dev ─────────────────────────────────
+// credentials:true is intentionally OMITTED — the frontend doesn't send cookies
+// and credentials:true breaks wildcard-origin matching in browsers (CORS spec).
+// Using a dynamic origin function so Railway/Perplexity subdomains all pass through.
 app.use(cors({
-  origin: [
-    "https://www.perplexity.ai",
-    "https://perplexity.ai",
-    "https://sites.pplx.app",
-    /\.perplexity\.ai$/,
-    /\.pplx\.app$/,
-    "http://localhost:5173",
-    "http://localhost:5000",
-  ],
+  origin: (origin, callback) => {
+    // Allow server-to-server requests (no origin header) and local dev
+    if (!origin) return callback(null, true);
+    const allowed = [
+      /^https?:\/\/localhost(:\d+)?$/,
+      /\.perplexity\.ai$/,
+      /\.pplx\.app$/,
+      /^https:\/\/perplexity\.ai$/,
+      /^https:\/\/www\.perplexity\.ai$/,
+      // Allow Railway's own domain in case the app is ever accessed directly
+      /\.railway\.app$/,
+    ];
+    if (allowed.some(pattern => pattern.test(origin))) {
+      return callback(null, origin); // reflect the exact origin (required for credentialed requests)
+    }
+    return callback(null, false); // block unknown origins
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization", "x-api-secret"],
+  credentials: false, // frontend uses no cookies — keeping false avoids browser CORS rejections
 }));
+
+// Handle OPTIONS preflight explicitly before any other middleware
+app.options("*", cors());
 
 app.use(
   express.json({

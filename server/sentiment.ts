@@ -20,8 +20,8 @@
  *   #3 Analyst upgrades/downgrades (retail can't capture day-of move)
  */
 
-const ALPACA_KEY    = process.env.ALPACA_KEY;
-const ALPACA_SECRET = process.env.ALPACA_SECRET;
+const ALPACA_KEY    = process.env.ALPACA_KEY    ?? "";
+const ALPACA_SECRET = process.env.ALPACA_SECRET ?? "";
 // Key presence validated in alpaca.ts at startup
 const DATA_BASE     = "https://data.alpaca.markets";
 // MarketAux is optional — sentiment degrades gracefully without it

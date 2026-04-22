@@ -1,9 +1,9 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-const API_BASE = "__PORT_5000__".startsWith("__") 
-  ? "https://gatekeeper-production-e843.up.railway.app" 
+const API_BASE = "__PORT_5000__".startsWith("__")
+  ? "https://gatekeeper-production-e843.up.railway.app"
   : "__PORT_5000__";
-const _v = "2.0.0"; // cache-bust — do not remove
+const _v = "2.1.0"; // cache-bust — do not remove
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -19,6 +19,7 @@ export async function apiRequest(
 ): Promise<Response> {
   const res = await fetch(`${API_BASE}${url}`, {
     method,
+    credentials: "omit",          // no cookies — prevents CORS preflight failures
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
   });
@@ -33,7 +34,9 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(`${API_BASE}${queryKey.join("/")}`);
+    const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
+      credentials: "omit",        // no cookies — must match server credentials:false
+    });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;
@@ -49,8 +52,8 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: 300_000, // 5 minutes — avoids stale data without hammering the server
-      retry: 1,           // one retry on transient failures, then surface the error
+      staleTime: 300_000, // 5 minutes
+      retry: 1,
     },
     mutations: {
       retry: false,
