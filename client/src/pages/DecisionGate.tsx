@@ -514,7 +514,7 @@ function TrailingStopModal({ ticker, entryPrice, onSet, onSkip }: {
               const f = parseFloat(floorPct);
               const t = parseFloat(trailPct);
               if (isNaN(f) || isNaN(t) || f <= 0 || t <= 0) {
-                toast({ title: "Invalid values", description: "Enter valid floor and trail percentages.", variant: "destructive" });
+                toast({ title: "Invalid values", description: "Enter valid floor and trail percentages.", variant: "warning" });
                 return;
               }
               onSet(entryPrice * (1 - f / 100), t);
@@ -564,7 +564,15 @@ export default function DecisionGate() {
             if (entryPrice > 0) setStopModal({ ticker: updated?.ticker ?? "", entryPrice });
           }
         } catch (e: any) {
-          toast({ title: "Decision recorded — execution failed", description: e.message, variant: "destructive" });
+          // 400 = by-design guard (short-sell protection, position rules) — amber, not red
+          const is400 = e.message?.startsWith("400");
+          toast({
+            title: is400 ? "Trade blocked by GateKeeper AI" : "Decision recorded — execution failed",
+            description: is400
+              ? e.message.replace(/^400:\s*/, "").replace(/^{.*?"error":"/, "").replace(/".*$/, "")
+              : e.message,
+            variant: is400 ? "warning" : "destructive",
+          });
         }
       } else {
         toast({ title: "Recommendation rejected", description: `GateKeeper AI is tracking what this trade would have returned. Check After Action tomorrow.` });
@@ -576,12 +584,15 @@ export default function DecisionGate() {
     },
     onError: (e: any) => {
       const is503 = e.message?.includes("503") || e.message?.includes("Service Unavailable") || e.message?.includes("unavailable");
+      const is400 = e.message?.startsWith("400");
       toast({
-        title: is503 ? "Server unavailable — decision NOT recorded" : "Decision failed — please try again",
+        title: is503 ? "Server unavailable — decision NOT recorded" : is400 ? "Trade blocked by GateKeeper AI" : "Decision failed — please try again",
         description: is503
           ? "Railway server is starting up. Wait 10–20 seconds and try again — your signal is still here."
+          : is400
+          ? e.message.replace(/^400:\s*/, "").replace(/^\{.*?"error":"/, "").replace(/".*$/, "")
           : `Error: ${e.message}. Your signal has not been lost.`,
-        variant: "destructive",
+        variant: is400 ? "warning" : "destructive",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });
     },

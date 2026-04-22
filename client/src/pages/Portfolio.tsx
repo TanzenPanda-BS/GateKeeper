@@ -111,7 +111,7 @@ function StopEditor({ pos, onClose, isShort = false }: {
       onClose();
     },
     onError: (e: any) => {
-      toast({ title: "Failed to set stop", description: e.message, variant: "destructive" });
+      toast({ title: "Failed to set stop", description: e.message, variant: e.message?.startsWith("400") ? "warning" : "destructive" });
     },
   });
 
