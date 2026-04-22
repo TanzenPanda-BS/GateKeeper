@@ -23,7 +23,7 @@ export default function Dashboard() {
   const { data: pending = [] } = useQuery<Recommendation[]>({ queryKey: ["/api/recommendations/pending"], refetchInterval: 30000 });
   const { data: trust } = useQuery<TrustMetrics>({ queryKey: ["/api/trust-metrics"], refetchInterval: 60000 });
   const { data: account } = useQuery<any>({ queryKey: ["/api/alpaca/account"], refetchInterval: 60000 });
-  const { data: clock } = useQuery<any>({ queryKey: ["/api/alpaca/clock"], refetchInterval: 60000 });
+  const { data: clock } = useQuery<any>({ queryKey: ["/api/alpaca/clock"], refetchInterval: 30000, staleTime: 0 });
   const { data: session } = useQuery<any>({ queryKey: ["/api/session"], refetchInterval: 60000 });
   const { data: alerts = [] } = useQuery<any[]>({ queryKey: ["/api/alerts"], refetchInterval: 300000 });
   const { data: allSentiment = [] } = useQuery<any[]>({ queryKey: ["/api/sentiment"], refetchInterval: 300000 });
@@ -91,8 +91,19 @@ export default function Dashboard() {
 
   const generateSignals = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/signals/generate", {});
-      return res.json();
+      // Retry once on 503 (Railway cold-start) with a 4-second pause
+      let res: Response;
+      try {
+        res = await apiRequest("POST", "/api/signals/generate", {});
+      } catch (e: any) {
+        if (e.message?.startsWith("503")) {
+          await new Promise(r => setTimeout(r, 4000));
+          res = await apiRequest("POST", "/api/signals/generate", {});
+        } else {
+          throw e;
+        }
+      }
+      return res!.json();
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/pending"] });

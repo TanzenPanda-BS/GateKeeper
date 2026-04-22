@@ -7,7 +7,7 @@ export default function Sidebar() {
   const [location] = useLocation();
   const { data: pending = [] } = useQuery<Recommendation[]>({ queryKey: ["/api/recommendations/pending"], refetchInterval: 30000 });
   const { data: session } = useQuery<any>({ queryKey: ["/api/session"], refetchInterval: 60000 });
-  const { data: clock } = useQuery<any>({ queryKey: ["/api/alpaca/clock"], refetchInterval: 60000 });
+  const { data: clock } = useQuery<any>({ queryKey: ["/api/alpaca/clock"], refetchInterval: 30000, staleTime: 0 });
   const { data: sentimentData = [] } = useQuery<any[]>({ queryKey: ["/api/sentiment"], refetchInterval: 300000 });
   const dangerCount = sentimentData.filter((s: any) => s.alertLevel === "DANGER" || s.alertLevel === "CAUTION").length;
 
