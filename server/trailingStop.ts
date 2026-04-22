@@ -73,6 +73,9 @@ export async function checkAllStops(): Promise<StopCheckResult> {
           marketAuxScore: existing?.marketAuxScore ?? null,
           updatedAt: new Date().toISOString(),
         });
+        // Clear the stop so this breach doesn't re-fire on every subsequent cron tick.
+        // The user must re-arm the stop from the Portfolio page if they choose to stay in the position.
+        storage.clearStop(pos.ticker);
       }
     } else {
       // LONG position logic:
@@ -102,6 +105,9 @@ export async function checkAllStops(): Promise<StopCheckResult> {
           marketAuxScore: existing?.marketAuxScore ?? null,
           updatedAt: new Date().toISOString(),
         });
+        // Clear the stop so this breach doesn't re-fire on every subsequent cron tick.
+        // The user must re-arm the stop from the Portfolio page if they choose to stay in the position.
+        storage.clearStop(pos.ticker);
       }
     }
   }

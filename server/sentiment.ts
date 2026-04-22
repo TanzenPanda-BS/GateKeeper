@@ -20,10 +20,12 @@
  *   #3 Analyst upgrades/downgrades (retail can't capture day-of move)
  */
 
-const ALPACA_KEY    = process.env.ALPACA_KEY    || "PKYBFF6MWB5N7PYTLECQMRTKYA";
-const ALPACA_SECRET = process.env.ALPACA_SECRET || "9eqijRmKjN8NGX8pNoHXBL2PgdbMEW2LY8EftZ8tvNzw";
+const ALPACA_KEY    = process.env.ALPACA_KEY;
+const ALPACA_SECRET = process.env.ALPACA_SECRET;
+// Key presence validated in alpaca.ts at startup
 const DATA_BASE     = "https://data.alpaca.markets";
-const MARKETAUX_KEY = process.env.MARKETAUX_KEY || "J1aWpdZbFvvC2pwicE93lFDiflg7DhJLWuUlmcOv";
+// MarketAux is optional — sentiment degrades gracefully without it
+const MARKETAUX_KEY = process.env.MARKETAUX_KEY ?? null;
 
 // ── Keyword sentiment vocabulary ──────────────────────────────────────────────
 // Curated for financial/market context. Weighted: strong words score ±2, normal ±1.

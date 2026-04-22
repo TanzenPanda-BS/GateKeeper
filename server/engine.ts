@@ -218,11 +218,17 @@ export async function recalculateTrustScore(): Promise<void> {
   const aiWinRate = resolvedDecided.length > 0 ? (aiWins.length / resolvedDecided.length) * 100 : 0;
   const userWinRate = resolvedDecided.length > 0 ? (userWins.length / resolvedDecided.length) * 100 : 0;
 
-  // Trust score: composite of approval rate + user accuracy relative to AI
+  // Trust score: composite of engagement quality + performance relative to AI
   // Scale: 0–100. Components:
-  //   40pts: engagement (approval rate normalized — 50% approval = 40pts)
-  //   60pts: performance (your win rate relative to AI)
-  const engagementScore = Math.min(40, (approvalRate / 50) * 40);
+  //   40pts: engagement — approval rate (capped at 70% to avoid blind-approval gaming)
+  //           + decision volume (up to 10pts for 10+ decisions)
+  //           + win-rate quality gate (up to 10pts)
+  //   60pts: performance (user win rate relative to AI, once 5+ resolved decisions)
+  const engagementScore = Math.min(40,
+    (Math.min(approvalRate, 70) / 70) * 20 +                           // 20pts: 0–70% approval
+    Math.min(10, totalDecisions) +                                       // 10pts: 1pt per decision up to 10
+    (resolvedDecided.length >= 5 ? Math.min(10, (userWinRate / 60) * 10) : 0) // 10pts: win rate quality
+  );
   const performanceScore = resolvedDecided.length >= 5
     ? Math.min(60, (userWinRate / 100) * 60)
     : 30; // neutral 30 until enough data
@@ -311,28 +317,36 @@ export async function recalculateTrustScore(): Promise<void> {
 // ── Daily AAR generator ───────────────────────────────────────────────────────
 export async function generateDailyAAR(): Promise<AfterActionReport | null> {
   const session = storage.getBetaSession();
-  const today = new Date().toISOString().split("T")[0];
-  const startOfDay = `${today}T00:00:00.000Z`;
-  const endOfDay = `${today}T23:59:59.999Z`;
+  // Use ET date to match when US markets actually trade — prevents UTC-midnight
+  // boundary from splitting a trading day across two AAR records.
+  const todayET    = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // "YYYY-MM-DD"
+  const startOfDay = `${todayET}T00:00:00.000Z`;
+  const endOfDay   = `${todayET}T23:59:59.999Z`;
 
-  const allRecs = storage.getRecommendations(500);
-  const todayRecs = allRecs.filter(r =>
-    r.decidedAt && r.decidedAt >= startOfDay && r.decidedAt <= endOfDay
-  );
+  const allRecs    = storage.getRecommendations(500);
+  // Filter by ET date prefix so decisions made after midnight UTC (but same ET day) are included
+  const todayRecs  = allRecs.filter(r => r.decidedAt?.startsWith(todayET));
   const todayResolved = todayRecs.filter(r => r.resolvedAt);
 
-  const total = todayRecs.length;
+  const total    = todayRecs.length;
   const approved = todayRecs.filter(r => r.userDecision === "APPROVED").length;
   const rejected = todayRecs.filter(r => r.userDecision === "REJECTED").length;
   const modified = todayRecs.filter(r => r.userDecision === "MODIFIED").length;
-  const aiCorrect = todayResolved.filter(r => r.aiWasCorrect === 1).length;
+  const aiCorrect   = todayResolved.filter(r => r.aiWasCorrect === 1).length;
   const userCorrect = todayResolved.filter(r => r.userWasCorrect === 1).length;
-  const resolvedCount = todayResolved.length || 1; // avoid div/0
 
-  const actualPnl = round2(todayResolved.reduce((s, r) => s + (r.outcomePnl ?? 0), 0));
+  // Don't store a fabricated AAR if there's nothing to report today
+  if (total === 0 && todayResolved.length === 0) {
+    console.log("[AAR] No decisions or resolutions today — skipping daily AAR");
+    return null;
+  }
+
+  const resolvedCount = todayResolved.length; // intentionally 0 when none resolved
+  const aiPct   = resolvedCount > 0 ? round2((aiCorrect   / resolvedCount) * 100) : 0;
+  const userPct = resolvedCount > 0 ? round2((userCorrect / resolvedCount) * 100) : 0;
+
+  const actualPnl  = round2(todayResolved.reduce((s, r) => s + (r.outcomePnl ?? 0), 0));
   const phantomPnl = round2(todayResolved.reduce((s, r) => s + (r.phantomPnl ?? 0), 0));
-  const aiPct = round2((aiCorrect / resolvedCount) * 100);
-  const userPct = round2((userCorrect / resolvedCount) * 100);
 
   // Biggest win/miss from today
   const resolvedApproved = todayResolved.filter(r => r.userDecision !== "REJECTED" && (r.outcomePnl ?? 0) > 0);

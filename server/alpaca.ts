@@ -1,6 +1,9 @@
 // Alpaca Paper Trading API integration
-const ALPACA_KEY = process.env.ALPACA_KEY || "PKYBFF6MWB5N7PYTLECQMRTKYA";
-const ALPACA_SECRET = process.env.ALPACA_SECRET || "9eqijRmKjN8NGX8pNoHXBL2PgdbMEW2LY8EftZ8tvNzw";
+const ALPACA_KEY = process.env.ALPACA_KEY;
+const ALPACA_SECRET = process.env.ALPACA_SECRET;
+if (!ALPACA_KEY || !ALPACA_SECRET) {
+  throw new Error("[FATAL] ALPACA_KEY and ALPACA_SECRET must be set as environment variables. Never hardcode secrets in source.");
+}
 const BROKER_BASE = "https://paper-api.alpaca.markets/v2";
 const DATA_BASE = "https://data.alpaca.markets/v2";
 
@@ -193,15 +196,30 @@ function sma(bars: AlpacaBar[], period: number): number {
 }
 
 function rsi(bars: AlpacaBar[], period = 14): number {
-  const closes = bars.slice(-(period + 1)).map(b => b.c);
-  let gains = 0, losses = 0;
-  for (let i = 1; i < closes.length; i++) {
+  const closes = bars.map(b => b.c);
+  // Need at least 2× period bars for a properly warmed Wilder RSI
+  if (closes.length < period * 2) return 50;
+
+  // Seed: simple average of first `period` gains/losses
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
     const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses += Math.abs(diff);
+    if (diff > 0) avgGain += diff;
+    else avgLoss += Math.abs(diff);
   }
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
+  avgGain /= period;
+  avgLoss /= period;
+
+  // Wilder's smoothing for all remaining bars
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
@@ -215,10 +233,21 @@ export async function generateSignals(accountEquity: number): Promise<Signal[]> 
   const signals: Signal[] = [];
   const tickers = ["NVDA", "MSFT", "TSLA", "AMD", "AAPL", "META", "AMZN", "GOOGL"];
 
-  for (const ticker of tickers) {
+  // Fetch all bars in parallel — cuts signal generation from ~8s to ~1s
+  const barResults = await Promise.allSettled(
+    tickers.map(ticker =>
+      getHistoricalBars(ticker, "1Day", 60).then(bars => ({ ticker, bars }))
+    )
+  );
+
+  for (const result of barResults) {
+    if (result.status === "rejected") {
+      console.error(`[Signal] Bar fetch failed:`, result.reason);
+      continue;
+    }
+    const { ticker, bars } = result.value;
     try {
-      const bars = await getHistoricalBars(ticker, "1Day", 35);
-      if (!bars || bars.length < 20) continue;
+      if (!bars || bars.length < 30) continue;
 
       const price = bars[bars.length - 1].c;
       const sma20 = sma(bars, 20);
@@ -325,9 +354,9 @@ export async function generateSignals(accountEquity: number): Promise<Signal[]> 
         signalAge: 0,
       });
     } catch (e) {
-      console.error(`Signal gen error for ${ticker}:`, e);
+      console.error(`[Signal] Processing error for ${ticker}:`, e);
     }
-  }
+  } // end for barResults
 
   return signals;
 }

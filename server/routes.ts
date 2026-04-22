@@ -85,12 +85,24 @@ async function syncPositions() {
     }
 
     return live.length;
-  } catch { return 0; }
+  } catch (e) {
+    console.error("[syncPositions] Failed to sync positions from Alpaca:", e);
+    return 0;
+  }
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // Initialize on startup
-  await initBetaSession();
+  await initBetaSession().then(session => {
+    if (!session) {
+      console.error("[INIT] Beta session failed on startup — scheduling retry in 30s");
+      setTimeout(async () => {
+        const retry = await initBetaSession();
+        if (!retry) console.error("[INIT] Retry also failed — check Alpaca connectivity and env vars");
+        else console.log("[INIT] Beta session created on retry.");
+      }, 30000);
+    }
+  });
   await syncPositions();
 
   // Auto-sync positions every 60 seconds
@@ -286,10 +298,49 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const updated = storage.updateRecommendationDecision(id, decision, modifiedShares, note);
     if (!updated) return res.status(404).json({ error: "Not found" });
 
+    // If approved/modified, place the Alpaca order atomically.
+    // On failure, roll back to PENDING so the user can retry —
+    // prevents "APPROVED but never traded" from corrupting the trust score.
+    let order = null;
+    if (decision === "APPROVED" || decision === "MODIFIED") {
+      try {
+        const qty  = updated.modifiedShares ?? updated.shares;
+        const side = updated.action === "BUY" ? "buy" : "sell";
+
+        // Guard: don’t create an unintended short on a SELL decision
+        if (side === "sell") {
+          const livePositions = await getPositions();
+          const hasPosition   = livePositions.some(
+            p => p.symbol === updated.ticker && parseFloat(p.qty) > 0
+          );
+          if (!hasPosition) {
+            storage.updateRecommendationDecision(id, "PENDING");
+            return res.status(400).json({
+              error: `No long position in ${updated.ticker}. Executing would create an unintended short. Decision rolled back to PENDING.`,
+            });
+          }
+        }
+
+        order = await placeOrder({
+          symbol: updated.ticker, qty, side,
+          type: "market", time_in_force: "day",
+          client_order_id: `gk-rec-${updated.id}-${Date.now()}`,
+        });
+        if (order?.id) storage.setAlpacaOrderId(updated.id, order.id);
+      } catch (e: any) {
+        console.error(`[execute] Order failed for rec ${id}:`, e.message);
+        // Roll back — let the user retry rather than recording a phantom trade
+        storage.updateRecommendationDecision(id, "PENDING");
+        return res.status(502).json({
+          error: `Decision recorded but Alpaca order failed: ${e.message}. Decision rolled back to PENDING — please try again.`,
+        });
+      }
+    }
+
     // Recalculate trust score after every decision
     try { await recalculateTrustScore(); } catch {}
 
-    res.json(updated);
+    res.json({ updated, order });
   });
 
   // ── End-of-day pipeline (manual trigger + auto at 4:30pm ET) ────────────
@@ -607,7 +658,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const trust = storage.getTrustMetrics();
       const session = storage.getBetaSession();
       if (!trust || (trust.totalDecisions ?? 0) < 1) {
-        return res.status(204).json(null);
+        return res.status(200).json(null);
       }
 
       const daysActive = session

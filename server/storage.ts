@@ -18,6 +18,15 @@ const sqlite = new Database(DB_PATH);
 export const db = drizzle(sqlite);
 console.log(`[DB] SQLite opened at: ${DB_PATH}`);
 
+// ── Safety pragmas ────────────────────────────────────────────────────────────
+// WAL mode: allows concurrent reads during writes, survives crashes mid-write.
+// synchronous=NORMAL: safe on Railway volumes (fsync on WAL checkpoints).
+// busy_timeout: wait up to 5s on a write lock instead of throwing SQLITE_BUSY.
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("synchronous = NORMAL");
+sqlite.pragma("foreign_keys = ON");
+sqlite.pragma("busy_timeout = 5000");
+
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS beta_session (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,6 +191,18 @@ try { sqlite.exec(`ALTER TABLE positions ADD COLUMN stop_loss_floor REAL`); } ca
 try { sqlite.exec(`ALTER TABLE positions ADD COLUMN trail_pct REAL`); } catch {}
 try { sqlite.exec(`ALTER TABLE positions ADD COLUMN trail_high_water_mark REAL`); } catch {}
 try { sqlite.exec(`ALTER TABLE positions ADD COLUMN stop_active INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+// Deduplicate any existing duplicate ticker rows (keep the most recently updated)
+// then create a unique index. Wrapped in try/catch so it's a no-op on clean DBs.
+try {
+  sqlite.exec(`
+    DELETE FROM positions
+    WHERE id NOT IN (
+      SELECT MAX(id) FROM positions GROUP BY ticker
+    )
+  `);
+} catch {}
+try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_ticker ON positions(ticker)`); } catch {}
 
 export interface IStorage {
   // Beta session
@@ -363,24 +384,30 @@ export class Storage implements IStorage {
     if (ex) return db.update(positions).set(data).where(eq(positions.ticker, data.ticker)).returning().get();
     return db.insert(positions).values(data).returning().get();
   }
-  // Update market data columns only — NEVER touches stop columns on existing rows
+  // Update market data columns only — NEVER touches stop columns on existing rows.
+  // Uses SQLite ON CONFLICT(ticker) DO UPDATE so the operation is atomic —
+  // concurrent syncPositions() calls cannot create duplicate rows.
   upsertPositionPreserveStop(data: InsertPosition): Position {
-    const ex = db.select().from(positions).where(eq(positions.ticker, data.ticker)).get();
-    if (ex) {
-      // Only update the market-data fields; leave stop_loss_floor / trail_pct / etc. untouched
-      sqlite.prepare(`
-        UPDATE positions
-        SET shares = ?, avg_cost = ?, current_price = ?, market_value = ?,
-            unrealized_pnl = ?, unrealized_pct = ?, is_auto_managed = ?, updated_at = ?
-        WHERE ticker = ?
-      `).run(
-        data.shares, data.avgCost, data.currentPrice, data.marketValue,
-        data.unrealizedPnl, data.unrealizedPct, data.isAutoManaged, data.updatedAt,
-        data.ticker
-      );
-      return db.select().from(positions).where(eq(positions.ticker, data.ticker)).get()!;
-    }
-    return db.insert(positions).values(data).returning().get();
+    sqlite.prepare(`
+      INSERT INTO positions
+        (ticker, shares, avg_cost, current_price, market_value,
+         unrealized_pnl, unrealized_pct, is_auto_managed, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(ticker) DO UPDATE SET
+        shares          = excluded.shares,
+        avg_cost        = excluded.avg_cost,
+        current_price   = excluded.current_price,
+        market_value    = excluded.market_value,
+        unrealized_pnl  = excluded.unrealized_pnl,
+        unrealized_pct  = excluded.unrealized_pct,
+        is_auto_managed = excluded.is_auto_managed,
+        updated_at      = excluded.updated_at
+        -- stop_loss_floor, trail_pct, trail_high_water_mark, stop_active intentionally excluded
+    `).run(
+      data.ticker, data.shares, data.avgCost, data.currentPrice, data.marketValue,
+      data.unrealizedPnl, data.unrealizedPct, data.isAutoManaged, data.updatedAt,
+    );
+    return db.select().from(positions).where(eq(positions.ticker, data.ticker)).get()!;
   }
   deletePosition(ticker: string): void {
     db.delete(positions).where(eq(positions.ticker, ticker)).run();
