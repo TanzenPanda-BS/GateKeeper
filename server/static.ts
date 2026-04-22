@@ -13,7 +13,13 @@ export function serveStatic(app: Express) {
   app.use(express.static(distPath));
 
   // fall through to index.html if the file doesn't exist
-  app.use("/{*path}", (_req, res) => {
+  // Exclude OPTIONS so CORS preflight is never swallowed by the SPA catch-all
+  app.use("/{*path}", (req, res) => {
+    if (req.method === "OPTIONS") {
+      // Let CORS middleware (registered earlier) handle it
+      res.sendStatus(204);
+      return;
+    }
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
