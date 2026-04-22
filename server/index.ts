@@ -41,7 +41,8 @@ app.use(cors({
 }));
 
 // Handle OPTIONS preflight explicitly before any other middleware
-app.options("*", cors());
+// Express 5 requires path-to-regexp v8 syntax — bare "*" is invalid, use "/{*path}"
+app.options("/{*path}", cors());
 
 app.use(
   express.json({
