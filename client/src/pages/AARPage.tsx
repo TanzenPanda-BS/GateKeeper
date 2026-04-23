@@ -10,7 +10,7 @@ export default function AARPage() {
   const report = reports[0];
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       <div>
         <h1 className="text-xl font-semibold">After Action Report</h1>
         <p className="text-sm text-muted-foreground mt-0.5">Every recommendation tracked to its outcome — approved, rejected, or modified</p>
@@ -40,7 +40,7 @@ export default function AARPage() {
           </Card>
 
           {/* Scorecard */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
             {[
               { label: "GateKeeper AI Accuracy", value: `${fmt(report.aiAccuracyPct)}%`, sub: `${report.aiCorrectCount}/${report.totalRecommendations} correct` },
               { label: "Your Accuracy", value: `${fmt(report.userAccuracyPct)}%`, sub: `${report.userCorrectCount}/${report.totalRecommendations} correct` },
@@ -58,7 +58,7 @@ export default function AARPage() {
           </div>
 
           {/* Decision breakdown */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">Decision Breakdown</CardTitle>

@@ -208,7 +208,8 @@ function PositionTable({ positions, isLoading, isShort = false }: {
 
   return (
     <div className="space-y-0">
-      <div className="grid grid-cols-8 text-xs text-muted-foreground pb-2 border-b border-border px-1">
+      {/* Desktop table header — hidden on mobile */}
+      <div className="hidden md:grid grid-cols-8 text-xs text-muted-foreground pb-2 border-b border-border px-1">
         <span>Ticker</span>
         <span className="text-right">Shares</span>
         <span className="text-right">Avg Cost</span>
@@ -227,9 +228,35 @@ function PositionTable({ positions, isLoading, isShort = false }: {
         );
         return (
           <div key={p.ticker} className="border-b border-border/50">
+            {/* Mobile card */}
+            <div className={`md:hidden p-3 hover:bg-secondary/30 transition-colors ${isBreached ? "bg-red-500/5" : ""}`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="mono font-semibold text-base">{p.ticker}</span>
+                  {p.isAutoManaged === 1 && <Zap className="w-3 h-3 text-yellow-400" />}
+                  {hasStop && !isBreached && <ShieldAlert className="w-3 h-3 text-primary/60" />}
+                  {isBreached && <AlertTriangle className="w-3 h-3 text-red-400 animate-pulse" />}
+                </div>
+                <div className={`text-sm font-semibold mono ${p.unrealizedPnl >= 0 ? "gain" : "loss"}`}>
+                  {p.unrealizedPnl >= 0 ? "+" : "-"}${fmt(Math.abs(p.unrealizedPnl), 0)} ({p.unrealizedPct >= 0 ? "+" : "-"}{fmt(Math.abs(p.unrealizedPct))}%)
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <span>Shares: <span className="text-foreground mono">{Math.abs(p.shares)}</span></span>
+                <span>Cost: <span className="text-foreground mono">${fmt(p.avgCost)}</span></span>
+                <span>Price: <span className="text-foreground mono">${fmt(p.currentPrice)}</span></span>
+                <span>Exposure: <span className="text-foreground mono">${fmt(Math.abs(p.marketValue), 0)}</span></span>
+                <span>Type: <span className="text-foreground">{isShort ? "Short" : p.isAutoManaged === 1 ? "Auto" : "Long"}</span></span>
+                <span>Stop: <span className="text-foreground">{hasStop ? <button onClick={() => setEditStop(editStop === p.ticker ? null : p.ticker)} className="text-primary text-xs">Manage</button> : <button onClick={() => setEditStop(editStop === p.ticker ? null : p.ticker)} className="text-muted-foreground text-xs hover:text-primary">Set</button>}</span></span>
+              </div>
+              {isBreached && (
+                <Button size="sm" variant="outline" className="mt-2 h-7 text-xs px-3 border-red-500/40 text-red-400 hover:bg-red-500/10 w-full" disabled={exitMut.isPending} onClick={() => exitMut.mutate(p.ticker)}>Exit Now</Button>
+              )}
+            </div>
+            {/* Desktop row */}
             <div
               data-testid={`row-position-${p.ticker}`}
-              className={`grid grid-cols-8 text-sm py-3 px-1 hover:bg-secondary/30 transition-colors ${isBreached ? "bg-red-500/5" : ""}`}
+              className={`hidden md:grid grid-cols-8 text-sm py-3 px-1 hover:bg-secondary/30 transition-colors ${isBreached ? "bg-red-500/5" : ""}`}
             >
               <div className="flex items-center gap-2">
                 <span className="mono font-semibold">{p.ticker}</span>

@@ -42,7 +42,7 @@ export default function TrustPage() {
   const roiColor = !trust ? "" : trust.roiDelta >= 0 ? "gain" : "loss";
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       <div>
         <h1 className="text-xl font-semibold">Trust & ROI Analysis</h1>
         <p className="text-sm text-muted-foreground mt-0.5">90-day rolling evaluation of the platform and your subscription value</p>
@@ -130,7 +130,7 @@ export default function TrustPage() {
             </CardHeader>
             <CardContent>
               {(trust as any).autoTradeCount > 0 ? (
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                   {[
                     { label: "Auto Trades", value: `${(trust as any).autoTradeCount}`, sub: "Exception engine executions" },
                     { label: "Win Rate", value: `${fmt((trust as any).autoTradeWinRate)}%`, sub: "Closed auto-trades correct", colored: true, gain: (trust as any).autoTradeWinRate >= 50 },
@@ -153,7 +153,7 @@ export default function TrustPage() {
           </Card>
 
           {/* Metrics grid */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">Accuracy Comparison</CardTitle>

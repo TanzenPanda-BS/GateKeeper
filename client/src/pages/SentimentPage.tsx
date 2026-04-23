@@ -157,7 +157,7 @@ export default function SentimentPage() {
   const sparkData = history.map(h => h.score);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -209,9 +209,9 @@ export default function SentimentPage() {
       )}
 
       {/* Two-column layout: score grid + detail panel */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Score grid */}
-        <div className="col-span-2 space-y-2">
+        <div className="md:col-span-2 space-y-2">
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">All Tickers</div>
 
           {isLoading && (

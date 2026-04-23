@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import Sidebar from "./components/Sidebar";
+import MobileNav from "./components/MobileNav";
 import Dashboard from "./pages/Dashboard";
 import DecisionGate from "./pages/DecisionGate";
 import Portfolio from "./pages/Portfolio";
@@ -22,8 +23,12 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <Router hook={useHashLocation}>
         <div className="flex h-screen overflow-hidden bg-background">
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto">
+          {/* Sidebar: hidden on mobile, visible md+ */}
+          <div className="hidden md:flex">
+            <Sidebar />
+          </div>
+          {/* Main content — add bottom padding on mobile for the nav bar */}
+          <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
             <Switch>
               <Route path="/" component={Dashboard} />
               <Route path="/gate" component={DecisionGate} />
@@ -40,6 +45,8 @@ export default function App() {
             </Switch>
           </main>
         </div>
+        {/* Mobile bottom nav — visible only on mobile */}
+        <MobileNav />
       </Router>
       <Toaster />
     </QueryClientProvider>

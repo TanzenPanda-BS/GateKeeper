@@ -631,7 +631,7 @@ export default function DecisionGate() {
   const confPct = confidencePct[rec.confidence ?? "MEDIUM"] ?? 61;
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -649,9 +649,9 @@ export default function DecisionGate() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
         {/* Main card */}
-        <div className="col-span-2 space-y-4">
+        <div className="md:col-span-2 space-y-4">
           <Card className="border-primary/20">
             <CardContent className="pt-6 pb-6 space-y-5">
               {/* Header row */}
@@ -717,7 +717,7 @@ export default function DecisionGate() {
               </div>
 
               {/* Price targets */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2 md:gap-3">
                 <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/15">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
                     <TrendingUp className="w-3.5 h-3.5 text-green-400" />Target
@@ -764,9 +764,9 @@ export default function DecisionGate() {
               )}
 
               {/* Decision buttons */}
-              <div className="flex items-center gap-3 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-3 pt-1">
                 <Button data-testid="btn-approve"
-                  className="flex-1 gap-2 bg-green-600 hover:bg-green-500 text-white"
+                  className="w-full gap-2 bg-green-600 hover:bg-green-500 text-white"
                   onClick={() => decideMutation.mutate({ id: rec.id, decision: "APPROVED" })}
                   disabled={decideMutation.isPending}>
                   <CheckCircle className="w-4 h-4" />
@@ -774,20 +774,20 @@ export default function DecisionGate() {
                 </Button>
                 {mode === "modify" ? (
                   <Button data-testid="btn-approve-modified" variant="outline"
-                    className="flex-1 gap-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
+                    className="w-full gap-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
                     onClick={() => decideMutation.mutate({ id: rec.id, decision: "MODIFIED", modifiedShares: Number(modShares) || rec.shares, note })}
                     disabled={decideMutation.isPending}>
                     <Edit3 className="w-4 h-4" />Approve Modified
                   </Button>
                 ) : (
                   <Button data-testid="btn-modify" variant="outline"
-                    className="flex-1 gap-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
+                    className="w-full gap-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
                     onClick={() => setMode("modify")}>
                     <Edit3 className="w-4 h-4" />Modify
                   </Button>
                 )}
                 <Button data-testid="btn-reject" variant="outline"
-                  className="flex-1 gap-2 border-red-500/40 text-red-400 hover:bg-red-500/10"
+                  className="w-full gap-2 border-red-500/40 text-red-400 hover:bg-red-500/10"
                   onClick={() => decideMutation.mutate({ id: rec.id, decision: "REJECTED", note })}
                   disabled={decideMutation.isPending}>
                   <XCircle className="w-4 h-4" />

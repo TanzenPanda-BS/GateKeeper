@@ -158,7 +158,7 @@ export default function Dashboard() {
   const positionTickers = new Set(positions.map(p => p.ticker));
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* P3: Exit confirmation modal */}
       <AlertDialog open={exitTarget !== null} onOpenChange={open => !open && setExitTarget(null)}>
         <AlertDialogContent>
@@ -230,7 +230,7 @@ export default function Dashboard() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -242,7 +242,7 @@ export default function Dashboard() {
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <div className="flex flex-col items-end gap-1">
             <Button
               variant="outline"
@@ -284,7 +284,7 @@ export default function Dashboard() {
       )}
 
       {/* KPI row */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <Card data-testid="kpi-equity">
           <CardContent className="pt-5 pb-5">
             <div className="text-xs text-muted-foreground mb-1">Account Equity</div>
@@ -327,9 +327,9 @@ export default function Dashboard() {
       </div>
 
       {/* Main grid */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Pending decisions */}
-        <div className="col-span-2">
+        <div className="md:col-span-2">
           <Card>
             <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-sm font-semibold">Pending Decisions</CardTitle>
