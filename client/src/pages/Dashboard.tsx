@@ -283,8 +283,49 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+      {/* KPI row — mobile: horizontal scroll strip | desktop: 4-col grid */}
+
+      {/* Mobile scroll strip */}
+      <div className="md:hidden flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 snap-x snap-mandatory">
+        {/* Equity */}
+        <div data-testid="kpi-equity" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+          <div className="text-xs text-muted-foreground mb-1">Account Equity</div>
+          <div className="text-xl font-semibold mono">{equity !== null ? `$${fmt(equity, 0)}` : "—"}</div>
+          <div className="text-xs text-muted-foreground mt-1">BP: {buyingPower !== null ? `$${fmt(buyingPower, 0)}` : "—"}</div>
+        </div>
+        {/* ROI */}
+        <div data-testid="kpi-roi" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+          <div className="text-xs text-muted-foreground mb-1">ROI vs S&P 500</div>
+          <div className={`text-xl font-semibold mono ${(trust?.roiDelta ?? 0) >= 0 ? "gain" : "loss"}`}>
+            {trust ? `${trust.roiDelta >= 0 ? "+" : ""}${fmt(trust.roiDelta)}%` : "—"}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {trust?.portfolioReturn !== null && trust?.portfolioReturn !== undefined ? `Portfolio: ${trust.portfolioReturn >= 0 ? "+" : ""}${fmt(trust.portfolioReturn)}%` : "Since Day 1"}
+          </div>
+        </div>
+        {/* Trust Score */}
+        <div data-testid="kpi-trust-score" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+          <div className="text-xs text-muted-foreground mb-1">Trust Score</div>
+          <div className="text-xl font-semibold mono">
+            {trust ? <>{fmt(trust.trustScore, 0)}<span className="text-sm text-muted-foreground">/100</span></> : "—"}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">{trust?.totalDecisions ?? 0} decisions made</div>
+        </div>
+        {/* AI vs You */}
+        <div data-testid="kpi-win-rates" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+          <div className="text-xs text-muted-foreground mb-1">AI vs You</div>
+          <div className="text-xl font-semibold mono">
+            {trust && trust.totalDecisions > 0 ? `${fmt(trust.aiWinRate, 0)}%` : "N/A"}
+            {trust && trust.totalDecisions > 0 && <span className="text-sm text-muted-foreground ml-1">GK AI</span>}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {trust && trust.totalDecisions > 0 ? `You: ${fmt(trust.userWinRate, 0)}%` : "Make decisions to see stats"}
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop 4-col grid */}
+      <div className="hidden md:grid grid-cols-4 gap-4">
         <Card data-testid="kpi-equity">
           <CardContent className="pt-5 pb-5">
             <div className="text-xs text-muted-foreground mb-1">Account Equity</div>

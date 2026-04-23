@@ -363,13 +363,30 @@ export default function Portfolio() {
   });
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       <div>
         <h1 className="text-xl font-semibold">Portfolio</h1>
         <p className="text-sm text-muted-foreground mt-0.5">Current holdings — synced live from Alpaca every 60s</p>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      {/* Mobile: horizontal scroll row — each card is a fixed 140px wide snap item */}
+      <div className="md:hidden flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 snap-x snap-mandatory">
+        {[
+          { label: "Long Value",     value: `$${fmt(longValue)}`,    sub: `${longPositions.length} position${longPositions.length !== 1 ? "s" : ""}`, cls: "" },
+          { label: "Short Exposure", value: `$${fmt(shortExposure)}`, sub: `${shortPositions.length} short position${shortPositions.length !== 1 ? "s" : ""}`, cls: "text-yellow-400" },
+          { label: "Unrealized P&L", value: `${totalPnl >= 0 ? "+" : "-"}$${fmt(Math.abs(totalPnl))}`, sub: "All positions", cls: totalPnl >= 0 ? "gain" : "loss" },
+          { label: "Active Stops",   value: String(activeStops.length), sub: breachedStops.length > 0 ? `${breachedStops.length} BREACHED` : "monitoring", cls: breachedStops.length > 0 ? "text-red-400" : "" },
+        ].map(({ label, value, sub, cls }) => (
+          <div key={label} className="snap-start flex-shrink-0 w-36 rounded-xl border border-border bg-card p-3.5">
+            <div className="text-xs text-muted-foreground mb-1.5 whitespace-nowrap">{label}</div>
+            <div className={`text-lg font-semibold mono leading-tight ${cls}`}>{value}</div>
+            <div className="text-xs text-muted-foreground mt-1 whitespace-nowrap">{sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop: 4-column grid */}
+      <div className="hidden md:grid grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-5 pb-5">
             <div className="text-xs text-muted-foreground mb-1">Long Value</div>

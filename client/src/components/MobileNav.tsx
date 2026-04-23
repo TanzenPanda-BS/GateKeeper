@@ -19,35 +19,35 @@ export default function MobileNav() {
   ];
 
   const more = [
-    { href: "/reports",   label: "After Action",      icon: FileText },
-    { href: "/trust",     label: "Trust & ROI",        icon: TrendingUp },
-    { href: "/rules",     label: "Exception Rules",    icon: Zap },
-    { href: "/shadow",    label: "Shadow Portfolio",   icon: Ghost },
-    { href: "/scorecard", label: "Scorecard",          icon: Award },
+    { href: "/reports",   label: "After Action",    icon: FileText },
+    { href: "/trust",     label: "Trust & ROI",      icon: TrendingUp },
+    { href: "/rules",     label: "Exception Rules",  icon: Zap },
+    { href: "/shadow",    label: "Shadow Portfolio", icon: Ghost },
+    { href: "/scorecard", label: "Scorecard",        icon: Award },
   ];
 
   return (
     <>
-      {/* "More" drawer — slides up from bottom */}
+      {/* "More" drawer */}
       {moreOpen && (
         <div className="fixed inset-0 z-40 md:hidden" onClick={() => setMoreOpen(false)}>
           <div className="absolute inset-0 bg-black/60" />
           <div
-            className="absolute bottom-16 left-0 right-0 bg-card border-t border-border rounded-t-xl px-4 py-4 space-y-1"
+            className="absolute bottom-20 left-0 right-0 bg-card border-t border-border rounded-t-2xl px-4 pt-3 pb-4 space-y-1"
             onClick={e => e.stopPropagation()}
           >
-            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-3" />
+            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-4" />
             {more.map(({ href, label, icon: Icon }) => {
               const active = location === href || (href !== "/" && location.startsWith(href));
               return (
                 <Link key={href} href={href}>
                   <a
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-colors ${
-                      active ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    className={`flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-colors ${
+                      active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                     }`}
                     onClick={() => setMoreOpen(false)}
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon className="w-5 h-5 flex-shrink-0" />
                     {label}
                   </a>
                 </Link>
@@ -57,43 +57,49 @@ export default function MobileNav() {
         </div>
       )}
 
-      {/* Bottom tab bar */}
+      {/* Bottom tab bar — taller, larger touch targets */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-card border-t border-border">
-        <div className="flex items-stretch h-16">
+        <div className="flex items-stretch" style={{ height: "4.5rem" }}>
           {primary.map(({ href, label, icon: Icon, badge }) => {
             const active = location === href || (href !== "/" && location.startsWith(href));
             return (
               <Link key={href} href={href}>
-                <a className={`flex-1 flex flex-col items-center justify-center gap-0.5 relative transition-colors ${
+                <a className={`flex-1 flex flex-col items-center justify-center gap-1 px-1 relative transition-colors min-w-0 ${
                   active ? "text-primary" : "text-muted-foreground"
-                }`}>
+                }`}
+                  style={{ width: "20vw" }}
+                >
+                  {/* Active indicator line */}
+                  {active && (
+                    <span className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-0.5 bg-primary rounded-full" />
+                  )}
                   <div className="relative">
-                    <Icon className="w-5 h-5" />
+                    <Icon className="w-6 h-6" />
                     {badge && (
-                      <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                      <span className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1">
                         {badge}
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] font-medium">{label}</span>
-                  {active && <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full" />}
+                  <span className="text-[11px] font-medium leading-none truncate w-full text-center">{label}</span>
                 </a>
               </Link>
             );
           })}
-          {/* More button */}
+          {/* More */}
           <button
-            className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors ${
+            style={{ width: "20vw" }}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 px-1 min-w-0 transition-colors ${
               moreOpen ? "text-primary" : "text-muted-foreground"
             }`}
             onClick={() => setMoreOpen(v => !v)}
           >
-            <MoreHorizontal className="w-5 h-5" />
-            <span className="text-[10px] font-medium">More</span>
+            <MoreHorizontal className="w-6 h-6" />
+            <span className="text-[11px] font-medium leading-none">More</span>
           </button>
         </div>
-        {/* Safe area spacer for iOS home indicator */}
-        <div className="h-safe-bottom bg-card" style={{ height: "env(safe-area-inset-bottom)" }} />
+        {/* iOS safe area */}
+        <div style={{ height: "env(safe-area-inset-bottom)" }} className="bg-card" />
       </nav>
     </>
   );
