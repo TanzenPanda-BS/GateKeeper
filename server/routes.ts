@@ -203,7 +203,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // P7: fetch earnings proximity flags for all tickers at once
       const earningsFlags = await detectEarningsProximity(signals.map(s => s.ticker));
 
+      // Position-aware filter: build a map of ticker → side from live positions
+      // SELL signals only make sense if we hold a LONG position to exit.
+      // BUY signals should not fire if we already hold a LONG (avoid unintended doubling).
+      const livePositions = storage.getPositions();
+      const positionSide: Record<string, "long" | "short"> = {};
+      for (const p of livePositions) {
+        positionSide[p.ticker] = (parseFloat(p.qty) >= 0) ? "long" : "short";
+      }
+
       for (const sig of signals) {
+        // Position-aware guard: skip signals that would be blocked at execution anyway
+        const side = positionSide[sig.ticker];
+        if (sig.action === "SELL" && side !== "long") {
+          // No long position to sell — signal would create an unintended short, skip it
+          console.log(`[Signal] Skipping SELL ${sig.ticker} — no long position (side: ${side ?? "none"})`);
+          continue;
+        }
+        if (sig.action === "BUY" && side === "long") {
+          // Already long — skip to avoid doubling into an existing position without a decision
+          console.log(`[Signal] Skipping BUY ${sig.ticker} — already long`);
+          continue;
+        }
+
         // P6: Skip if ticker is within an active approved hold window
         const activeHold = storage.getActiveHoldForTicker(sig.ticker);
         if (activeHold) {
