@@ -288,13 +288,13 @@ export default function Dashboard() {
       {/* Mobile scroll strip */}
       <div className="md:hidden flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 snap-x snap-mandatory">
         {/* Equity */}
-        <div data-testid="kpi-equity" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+        <div data-testid="kpi-equity" className="snap-start flex-shrink-0 w-44 rounded-xl border border-border bg-card p-3.5">
           <div className="text-xs text-muted-foreground mb-1">Account Equity</div>
           <div className="text-xl font-semibold mono">{equity !== null ? `$${fmt(equity, 0)}` : "—"}</div>
           <div className="text-xs text-muted-foreground mt-1">BP: {buyingPower !== null ? `$${fmt(buyingPower, 0)}` : "—"}</div>
         </div>
         {/* ROI */}
-        <div data-testid="kpi-roi" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+        <div data-testid="kpi-roi" className="snap-start flex-shrink-0 w-44 rounded-xl border border-border bg-card p-3.5">
           <div className="text-xs text-muted-foreground mb-1">ROI vs S&P 500</div>
           <div className={`text-xl font-semibold mono ${(trust?.roiDelta ?? 0) >= 0 ? "gain" : "loss"}`}>
             {trust ? `${trust.roiDelta >= 0 ? "+" : ""}${fmt(trust.roiDelta)}%` : "—"}
@@ -304,7 +304,7 @@ export default function Dashboard() {
           </div>
         </div>
         {/* Trust Score */}
-        <div data-testid="kpi-trust-score" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+        <div data-testid="kpi-trust-score" className="snap-start flex-shrink-0 w-44 rounded-xl border border-border bg-card p-3.5">
           <div className="text-xs text-muted-foreground mb-1">Trust Score</div>
           <div className="text-xl font-semibold mono">
             {trust ? <>{fmt(trust.trustScore, 0)}<span className="text-sm text-muted-foreground">/100</span></> : "—"}
@@ -312,7 +312,7 @@ export default function Dashboard() {
           <div className="text-xs text-muted-foreground mt-1">{trust?.totalDecisions ?? 0} decisions made</div>
         </div>
         {/* AI vs You */}
-        <div data-testid="kpi-win-rates" className="snap-start flex-shrink-0 w-40 rounded-xl border border-border bg-card p-3.5">
+        <div data-testid="kpi-win-rates" className="snap-start flex-shrink-0 w-44 rounded-xl border border-border bg-card p-3.5">
           <div className="text-xs text-muted-foreground mb-1">AI vs You</div>
           <div className="text-xl font-semibold mono">
             {trust && trust.totalDecisions > 0 ? `${fmt(trust.aiWinRate, 0)}%` : "N/A"}
@@ -322,6 +322,8 @@ export default function Dashboard() {
             {trust && trust.totalDecisions > 0 ? `You: ${fmt(trust.userWinRate, 0)}%` : "Make decisions to see stats"}
           </div>
         </div>
+        {/* Trailing spacer so last card scrolls fully into view */}
+        <div className="flex-shrink-0 w-4" />
       </div>
 
       {/* Desktop 4-col grid */}
