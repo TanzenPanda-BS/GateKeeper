@@ -369,20 +369,22 @@ export default function Portfolio() {
         <p className="text-sm text-muted-foreground mt-0.5">Current holdings — synced live from Alpaca every 60s</p>
       </div>
 
-      {/* Mobile: horizontal scroll row — each card is a fixed 140px wide snap item */}
-      <div className="md:hidden flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 snap-x snap-mandatory">
+      {/* Mobile: horizontal scroll row — wider cards + right padding so last card isn't clipped */}
+      <div className="md:hidden flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 snap-x snap-mandatory" style={{ paddingRight: "1rem" }}>
         {[
           { label: "Long Value",     value: `$${fmt(longValue)}`,    sub: `${longPositions.length} position${longPositions.length !== 1 ? "s" : ""}`, cls: "" },
           { label: "Short Exposure", value: `$${fmt(shortExposure)}`, sub: `${shortPositions.length} short position${shortPositions.length !== 1 ? "s" : ""}`, cls: "text-yellow-400" },
           { label: "Unrealized P&L", value: `${totalPnl >= 0 ? "+" : "-"}$${fmt(Math.abs(totalPnl))}`, sub: "All positions", cls: totalPnl >= 0 ? "gain" : "loss" },
           { label: "Active Stops",   value: String(activeStops.length), sub: breachedStops.length > 0 ? `${breachedStops.length} BREACHED` : "monitoring", cls: breachedStops.length > 0 ? "text-red-400" : "" },
         ].map(({ label, value, sub, cls }) => (
-          <div key={label} className="snap-start flex-shrink-0 w-36 rounded-xl border border-border bg-card p-3.5">
+          <div key={label} className="snap-start flex-shrink-0 w-44 rounded-xl border border-border bg-card p-3.5">
             <div className="text-xs text-muted-foreground mb-1.5 whitespace-nowrap">{label}</div>
             <div className={`text-lg font-semibold mono leading-tight ${cls}`}>{value}</div>
             <div className="text-xs text-muted-foreground mt-1 whitespace-nowrap">{sub}</div>
           </div>
         ))}
+        {/* Spacer so last card scrolls fully into view */}
+        <div className="flex-shrink-0 w-4" />
       </div>
 
       {/* Desktop: 4-column grid */}
