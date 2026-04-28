@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
+import { ScanActivityFeed } from "@/components/ScanActivityFeed";
 import { ShieldCheck, RefreshCw, AlertTriangle, ChevronRight, TrendingUp, TrendingDown, Timer, CalendarClock, BarChart2, Activity, X, LogOut } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -488,6 +489,9 @@ export default function Dashboard() {
           <SentimentWidget sentiments={allSentiment} />
         </div>
       </div>
+
+      {/* GateKeeper AI Activity Feed — full width below main grid */}
+      <ScanActivityFeed />
     </div>
   );
 }

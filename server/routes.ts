@@ -266,9 +266,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         created.push(rec);
       }
 
-      const result = { generated: signals.length, stored: created.length, signals: created, scannedAt: new Date().toISOString() };
+      const scannedAt = new Date().toISOString();
+      const result = { generated: signals.length, stored: created.length, signals: created, scannedAt };
+
       // Persist last scan metadata so the UI can show cooldown across page refreshes
-      storage.setMeta("last_scan", JSON.stringify({ scannedAt: result.scannedAt, generated: signals.length, stored: created.length }));
+      storage.setMeta("last_scan", JSON.stringify({ scannedAt, generated: signals.length, stored: created.length }));
+
+      // Write to scan_log — captures every scan run for the Activity Feed
+      const topSig = signals.length > 0
+        ? signals.reduce((best, s) => (s.signalStrength ?? 0) > (best.signalStrength ?? 0) ? s : best, signals[0])
+        : null;
+      storage.addScanLog({
+        scannedAt,
+        generated: signals.length,
+        stored: created.length,
+        tickersEvaluated: signals.map(s => s.ticker),
+        topCandidate: topSig?.ticker ?? undefined,
+        topCandidateStrength: topSig?.signalStrength ?? undefined,
+        scanType: "scheduled",
+      });
+
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -279,6 +296,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const raw = storage.getMeta("last_scan");
       if (!raw) return res.json({ scannedAt: null, generated: 0, stored: 0 });
       res.json(JSON.parse(raw));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // GET /api/scan-log — returns last N scan runs for the Activity Feed
+  app.get("/api/scan-log", (_req, res) => {
+    try {
+      const log = storage.getScanLog(10);
+      res.json(log);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

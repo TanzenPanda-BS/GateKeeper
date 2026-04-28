@@ -147,6 +147,16 @@ sqlite.exec(`
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS scan_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scanned_at TEXT NOT NULL,
+    generated INTEGER NOT NULL DEFAULT 0,
+    stored INTEGER NOT NULL DEFAULT 0,
+    tickers_evaluated TEXT NOT NULL DEFAULT '[]',
+    top_candidate TEXT,
+    top_candidate_strength REAL,
+    scan_type TEXT NOT NULL DEFAULT 'manual'
+  );
 `);
 
 // Live migrations — add new columns to existing tables if they don't exist
@@ -262,6 +272,9 @@ export interface IStorage {
   // Key-value metadata store
   setMeta(key: string, value: string): void;
   getMeta(key: string): string | null;
+  // Scan log
+  addScanLog(entry: { scannedAt: string; generated: number; stored: number; tickersEvaluated: string[]; topCandidate?: string; topCandidateStrength?: number; scanType?: string }): void;
+  getScanLog(limit?: number): any[];
 }
 
 export class Storage implements IStorage {
@@ -622,6 +635,38 @@ export class Storage implements IStorage {
   getMeta(key: string): string | null {
     const row = sqlite.prepare("SELECT value FROM app_kv WHERE key = ?").get(key) as { value: string } | undefined;
     return row?.value ?? null;
+  }
+
+  // ── Scan Log ──────────────────────────────────────────────────────────────
+  addScanLog(entry: { scannedAt: string; generated: number; stored: number; tickersEvaluated: string[]; topCandidate?: string; topCandidateStrength?: number; scanType?: string }): void {
+    sqlite.prepare(`
+      INSERT INTO scan_log (scanned_at, generated, stored, tickers_evaluated, top_candidate, top_candidate_strength, scan_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.scannedAt,
+      entry.generated,
+      entry.stored,
+      JSON.stringify(entry.tickersEvaluated ?? []),
+      entry.topCandidate ?? null,
+      entry.topCandidateStrength ?? null,
+      entry.scanType ?? "manual",
+    );
+    // Keep only last 50 entries
+    sqlite.prepare(`DELETE FROM scan_log WHERE id NOT IN (SELECT id FROM scan_log ORDER BY id DESC LIMIT 50)`).run();
+  }
+
+  getScanLog(limit = 10): any[] {
+    const rows = sqlite.prepare(`SELECT * FROM scan_log ORDER BY id DESC LIMIT ?`).all(limit) as any[];
+    return rows.map(r => ({
+      id: r.id,
+      scannedAt: r.scanned_at,
+      generated: r.generated,
+      stored: r.stored,
+      tickersEvaluated: (() => { try { return JSON.parse(r.tickers_evaluated); } catch { return []; } })(),
+      topCandidate: r.top_candidate,
+      topCandidateStrength: r.top_candidate_strength,
+      scanType: r.scan_type,
+    }));
   }
 }
 
